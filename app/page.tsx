@@ -18,21 +18,22 @@ export default function AdminAutoFlat() {
   const [view, setView] = useState('main'); 
   const [step, setStep] = useState('groups'); 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isManualModalOpen, setIsManualModalOpen] = useState(false); // NUEVO: Modal de resultado manual
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [activeTournament, setActiveTournament] = useState<any>(null);
   const [appPlayers, setAppPlayers] = useState<any[]>([]);
   const [reportedMatches, setReportedMatches] = useState<any[]>([]); 
   
-  const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', regDate: '', startDate: '', endDate: '' });
+  const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '' });
   const [editT, setEditT] = useState<any>({}); 
-  const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', score: '', groupName: '' }); // NUEVO: Datos del resultado manual
+  const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', score: '', groupName: '' });
 
   const [search, setSearch] = useState('');
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
   const [scoringRules, setScoringRules] = useState({ win: 3, loss: 0, winWO: 3, lossWO: 0 });
 
+  // 1. AUTENTICACIÓN
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -54,6 +55,7 @@ export default function AdminAutoFlat() {
     return () => unsubscribe();
   }, []);
 
+  // 2. CARGA DE TORNEOS Y JUGADORES
   useEffect(() => {
     if (!isAdmin) return;
     const unsubT = onSnapshot(query(collection(db, "tournaments"), orderBy("createdAt", "desc")), (snap) => {
@@ -62,18 +64,38 @@ export default function AdminAutoFlat() {
 
     const fetchPlayers = async () => {
       try {
-        // AQUI ESTÁ EL CAMBIO QUE HICISTE ANTES (Buscando en 'players')
         const snap = await getDocs(collection(db, "players")); 
         setAppPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error("Error cargando jugadores:", e); }
     };
     fetchPlayers();
     return () => unsubT();
   }, [isAdmin]);
 
+  // 3. CARGA DE PARTIDOS DEL TORNEO ACTIVO
   useEffect(() => {
     if (!activeTournament || !isAdmin) return;
     setEditT(activeTournament);
+
+    // 🧹 1. LIMPIEZA INMEDIATA: Borramos los datos "fantasma" del torneo anterior
+    setGroups({ "Grupo A": [], "Grupo B": [] });
+    setScoringRules({ win: 3, loss: 0, winWO: 3, lossWO: 0 });
+    setReportedMatches([]);
+    setSearch('');
+
+    // 🔍 2. Cargar la configuración de ESTE torneo específico
+    const loadConfig = async () => {
+      const gDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
+      if (gDoc.exists() && gDoc.data().structure) {
+        setGroups(gDoc.data().structure);
+      }
+      
+      const rDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
+      if (rDoc.exists() && rDoc.data().win !== undefined) {
+        setScoringRules(rDoc.data() as any);
+      }
+    }
+    loadConfig();
 
     const unsubM = onSnapshot(query(collection(db, "tournaments", activeTournament.id, "matches"), orderBy("createdAt", "desc")), (snap) => {
       setReportedMatches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -87,11 +109,7 @@ export default function AdminAutoFlat() {
     catch (error) { alert("Credenciales incorrectas. Intenta de nuevo."); }
   };
 
-  const handleLogout = () => {
-    signOut(auth);
-    setView('main');
-  };
-
+  // CÁLCULO DE POSICIONES
   const calculateStandings = (groupName: string) => {
     const players = groups[groupName] || [];
     let stats: any = {};
@@ -132,15 +150,20 @@ export default function AdminAutoFlat() {
     }).sort((a: any, b: any) => b.Pts !== a.Pts ? b.Pts - a.Pts : b.pctGames - a.pctGames);
   };
 
+  // CREAR TORNEO
   const handleCreate = async () => {
-    if(!newT.name || !newT.price || !newT.endDate) return alert("Faltan datos obligatorios");
-    await addDoc(collection(db, "tournaments"), { ...newT, status: 'Inscripciones', createdAt: serverTimestamp() });
+    if(!newT.name || !newT.price) return alert("El nombre y el precio son obligatorios");
+    await addDoc(collection(db, "tournaments"), { 
+      ...newT, 
+      status: 'Inscripciones', 
+      createdAt: serverTimestamp() 
+    });
     setIsModalOpen(false);
-    setNewT({ name: '', category: '3ra', yape: '', desc: '', price: '', regDate: '', startDate: '', endDate: '' });
+    setNewT({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '' });
   };
 
   const handleUpdateTournament = async () => {
-    if(!editT.name || !editT.price) return alert("El nombre y precio no pueden estar vacíos.");
+    if(!editT.name) return alert("El nombre no puede estar vacío.");
     try {
       await updateDoc(doc(db, "tournaments", activeTournament.id), { ...editT });
       alert("¡Torneo actualizado correctamente!");
@@ -148,42 +171,60 @@ export default function AdminAutoFlat() {
     } catch (e) { alert("Error al actualizar el torneo."); }
   };
 
+  // BORRADO PROFUNDO DEL TORNEO
   const handleDeleteTournament = async () => {
-    const confirmacion = prompt("🚨 PELIGRO: Escribe 'ELIMINAR' para borrar este torneo permanentemente:");
+    const confirmacion = prompt("🚨 PELIGRO: Escribe 'ELIMINAR' en mayúsculas para destruir este torneo y TODOS sus resultados permanentemente:");
     if (confirmacion !== 'ELIMINAR') return;
+    
     try {
+      const matchesSnap = await getDocs(collection(db, "tournaments", activeTournament.id, "matches"));
+      const matchDeletions = matchesSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(matchDeletions);
+
+      await deleteDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
+      await deleteDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
+
       await deleteDoc(doc(db, "tournaments", activeTournament.id));
-      alert("Torneo eliminado con éxito.");
+      
+      alert("Torneo y todos sus datos eliminados con éxito. 🧹");
       setView('main'); 
-    } catch (e) { alert("Error al eliminar el torneo."); }
+      setActiveTournament(null); // Limpiamos la memoria
+    } catch (e) { 
+      alert("Hubo un error al limpiar la base de datos."); 
+      console.error(e);
+    }
   };
 
   const saveConfig = async () => {
     const tRef = doc(db, "tournaments", activeTournament.id);
     await setDoc(doc(tRef, "configuration", "groups"), { structure: groups, updatedAt: serverTimestamp() }, { merge: true });
     await setDoc(doc(tRef, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true });
-    alert("¡Configuración guardada!");
+    alert("¡Configuración y Grupos guardados en la nube! ☁️");
   };
 
   const deleteMatch = async (matchId: string) => {
-    if(!confirm("¿Borrar este resultado?")) return;
+    if(!confirm("¿Borrar este resultado permanentemente?")) return;
     await deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", matchId));
   };
 
-  // NUEVO: Función para agregar un partido manualmente
+  // AÑADIR RESULTADO MANUAL
   const handleAddManualMatch = async () => {
     if (!manualMatch.winnerName || !manualMatch.loserName || !manualMatch.score || !manualMatch.groupName) {
       return alert("Por favor completa todos los campos del partido.");
     }
+    if (manualMatch.winnerName === manualMatch.loserName) {
+      return alert("El ganador y el perdedor no pueden ser la misma persona.");
+    }
     await addDoc(collection(db, "tournaments", activeTournament.id, "matches"), {
       ...manualMatch,
-      status: 'approved', // Automáticamente aprobado porque lo pone el admin
+      status: 'approved', 
       createdAt: serverTimestamp()
     });
     setIsManualModalOpen(false);
     setManualMatch({ winnerName: '', loserName: '', score: '', groupName: '' });
   };
 
+  // MANEJO DE GRUPOS
   const addPlayerToGroup = (p: any, gName: string) => {
     if (groups[gName].find((x: any) => x.id === p.id)) return;
     setGroups((prev: any) => ({ ...prev, [gName]: [...prev[gName], { id: p.id, name: p.name || 'Sin Nombre', type: 'app' }] }));
@@ -196,7 +237,7 @@ export default function AdminAutoFlat() {
   };
   const addExternalPlayer = (gName: string) => {
     const name = prompt(`Nombre del invitado:`);
-    if (name) addPlayerToGroup({ id: `ext_${Date.now()}`, name: name, type: 'external' }, gName);
+    if (name) addPlayerToGroup({ id: `ext_${Date.now()}`, name: name.trim(), type: 'external' }, gName);
   };
 
   const filteredPlayers = appPlayers.filter(p => {
@@ -206,6 +247,7 @@ export default function AdminAutoFlat() {
     return nameMatch || dniMatch;
   });
 
+  // RENDERIZADO - LOGIN
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 font-bold uppercase tracking-widest">Verificando seguridad...</div>;
 
   if (!user || !isAdmin) {
@@ -232,24 +274,26 @@ export default function AdminAutoFlat() {
     );
   }
 
+  // RENDERIZADO - MAIN (CARTELERA)
   if (view === 'main') {
     return (
       <div className="p-10 bg-slate-50 min-h-screen text-slate-900 font-sans">
         <header className="flex justify-between items-center mb-10 border-b border-slate-200 pb-6">
           <div><h1 className="text-3xl font-bold">Torneos Activos</h1><p className="text-xs text-slate-400 font-bold uppercase mt-1">Admin: {user.email}</p></div>
           <div className="flex gap-4">
-             <button onClick={handleLogout} className="text-slate-500 font-bold hover:text-red-500 transition">Cerrar Sesión</button>
+             <button onClick={() => {signOut(auth); setView('main');}} className="text-slate-500 font-bold hover:text-red-500 transition">Cerrar Sesión</button>
              <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 text-white px-6 py-2 rounded font-semibold hover:bg-slate-800 transition">+ Nuevo Torneo</button>
           </div>
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {tournaments.length === 0 && <p className="text-slate-500">No hay torneos creados. Crea uno nuevo.</p>}
           {tournaments.map(t => (
             <div key={t.id} className="bg-white p-6 border border-slate-200 rounded-lg hover:border-slate-400 transition">
               <h2 className="text-xl font-bold mb-2">{t.name}</h2>
               <span className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded font-bold uppercase">{t.category}</span>
               <p className="text-slate-500 text-sm mt-4 mb-6">Cierre: <span className="font-semibold">{t.endDate || 'No definido'}</span></p>
-              <button onClick={() => { setActiveTournament(t); setView('manage'); }} className="w-full border border-slate-300 py-2 rounded font-semibold hover:bg-slate-50">Administrar</button>
+              <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full border border-slate-300 py-2 rounded font-semibold hover:bg-slate-50">Administrar</button>
             </div>
           ))}
         </div>
@@ -281,11 +325,12 @@ export default function AdminAutoFlat() {
     );
   }
 
+  // RENDERIZADO - ADMINISTRACIÓN DEL TORNEO
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       <div className="bg-white border-b border-slate-200 px-8 py-4 flex justify-between items-center sticky top-0 z-40 shadow-sm">
         <div className="flex items-center gap-6">
-          <button onClick={() => setView('main')} className="text-slate-500 font-bold hover:text-slate-900">&larr; Volver</button>
+          <button onClick={() => { setView('main'); setActiveTournament(null); }} className="text-slate-500 font-bold hover:text-slate-900">&larr; Volver</button>
           <h2 className="text-xl font-bold border-l border-slate-300 pl-6 uppercase">{activeTournament.name}</h2>
           <div className="flex gap-4 ml-8">
             <button onClick={()=>setStep('groups')} className={`text-sm font-semibold pb-1 ${step==='groups'?'border-b-2 border-slate-900':'text-slate-500'}`}>Grupos</button>
@@ -313,6 +358,7 @@ export default function AdminAutoFlat() {
                 </div>
               </div>
               <div className="max-h-[50vh] overflow-y-auto p-2 bg-slate-50">
+                {appPlayers.length === 0 && <p className="text-xs text-slate-500 text-center py-8">Nadie ha iniciado sesión en tu app de Flutter todavía.</p>}
                 {search.length > 0 && filteredPlayers.length === 0 && <p className="text-xs text-slate-500 text-center py-8 font-bold">No hay nadie llamado "{search}"</p>}
                 {filteredPlayers.map(p => (
                   <div key={p.id} className="p-3 border border-slate-200 rounded bg-white shadow-sm mb-2 flex flex-col gap-2">
@@ -331,7 +377,7 @@ export default function AdminAutoFlat() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 {Object.keys(groups).map(gName => (
-                  <div key={gName} className="bg-white border border-slate-200 rounded-lg p-4">
+                  <div key={gName} className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
                     <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
                       <div className="flex items-center gap-3"><h4 className="font-bold">{gName}</h4><button onClick={() => removeGroup(gName)} className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded hover:bg-red-100">Eliminar</button></div>
                       <button onClick={() => addExternalPlayer(gName)} className="text-xs font-bold text-blue-600 hover:underline">+ Invitado</button>
@@ -353,34 +399,39 @@ export default function AdminAutoFlat() {
         )}
 
         {step === 'settings' && (
-          <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-lg p-8">
+          <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-lg p-8 shadow-sm">
             <h3 className="text-xl font-bold mb-6">Ajustes Generales del Torneo</h3>
             <div className="grid grid-cols-2 gap-6">
-              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Torneo</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.name || ''} onChange={e => setEditT({...editT, name: e.target.value})} /></div>
+              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Torneo</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none focus:border-green-500" value={editT.name || ''} onChange={e => setEditT({...editT, name: e.target.value})} /></div>
               <div><label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label><select className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.category || '3ra'} onChange={e => setEditT({...editT, category: e.target.value})}><option>3ra</option><option>4ta</option><option>5ta</option></select></div>
               <div><label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label><input type="number" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.price || ''} onChange={e => setEditT({...editT, price: e.target.value})} /></div>
               <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.startDate || ''} onChange={e => setEditT({...editT, startDate: e.target.value})} /></div>
               <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Cierre</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.endDate || ''} onChange={e => setEditT({...editT, endDate: e.target.value})} /></div>
               <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Número Yape</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.yape || ''} onChange={e => setEditT({...editT, yape: e.target.value})} /></div>
               <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Descripción y Reglas Adicionales</label><textarea rows={4} className="w-full p-3 border border-slate-300 rounded outline-none resize-none" value={editT.desc || ''} onChange={e => setEditT({...editT, desc: e.target.value})} /></div>
+              
               <div className="col-span-2 flex justify-between items-center mt-6 border-t border-slate-200 pt-6">
-                 <button onClick={handleDeleteTournament} className="text-red-600 font-bold px-4 py-2 rounded hover:bg-red-50 transition border border-transparent hover:border-red-200">🗑️ Eliminar Torneo Permanentemente</button>
-                 <button onClick={handleUpdateTournament} className="bg-slate-900 text-white px-8 py-3 rounded font-bold hover:bg-slate-800 transition shadow-md">Guardar Ajustes del Torneo</button>
+                 <button onClick={handleDeleteTournament} className="text-red-600 font-bold px-4 py-2 rounded hover:bg-red-50 transition border border-transparent hover:border-red-200">
+                   🗑️ Eliminar Torneo Permanentemente
+                 </button>
+                 <button onClick={handleUpdateTournament} className="bg-slate-900 text-white px-8 py-3 rounded font-bold hover:bg-slate-800 transition shadow-md">
+                   Guardar Ajustes del Torneo
+                 </button>
               </div>
             </div>
           </div>
         )}
 
         {step === 'rules' && ( 
-          <div className="max-w-2xl mx-auto bg-white border border-slate-200 rounded-lg p-8">
+          <div className="max-w-2xl mx-auto bg-white border border-slate-200 rounded-lg p-8 shadow-sm">
              <h3 className="text-xl font-bold mb-6">Reglas de Puntuación</h3>
              <div className="grid grid-cols-2 gap-4 mb-8">
-                <button onClick={()=>setScoringRules({win:3, loss:0, winWO:3, lossWO:0})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50"><p className="font-bold mb-1">Estandar</p><p className="text-xs text-slate-500">Victoria +3 | Derrota 0 | WO 0</p></button>
-                <button onClick={()=>setScoringRules({win:3, loss:1, winWO:3, lossWO:-2})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50"><p className="font-bold mb-1">Competitivo</p><p className="text-xs text-slate-500">Victoria +3 | Derrota +1 | WO -2</p></button>
+                <button onClick={()=>setScoringRules({win:3, loss:0, winWO:3, lossWO:0})} className={`p-4 border rounded text-left transition ${scoringRules.win === 3 && scoringRules.loss === 0 ? 'border-slate-900 bg-slate-50' : 'border-slate-300 hover:bg-slate-50'}`}><p className="font-bold mb-1">Estandar</p><p className="text-xs text-slate-500">Victoria +3 | Derrota 0 | WO 0</p></button>
+                <button onClick={()=>setScoringRules({win:3, loss:1, winWO:3, lossWO:-2})} className={`p-4 border rounded text-left transition ${scoringRules.loss === 1 ? 'border-slate-900 bg-slate-50' : 'border-slate-300 hover:bg-slate-50'}`}><p className="font-bold mb-1">Competitivo</p><p className="text-xs text-slate-500">Victoria +3 | Derrota +1 | WO -2</p></button>
              </div>
              <div className="bg-slate-50 border border-slate-200 p-6 rounded grid grid-cols-3 gap-4 text-center">
-                <div><p className="text-xs font-bold text-slate-500 uppercase">Ganar</p><p className="text-2xl font-bold">+{scoringRules.win}</p></div>
-                <div><p className="text-xs font-bold text-slate-500 uppercase">Perder</p><p className="text-2xl font-bold">+{scoringRules.loss}</p></div>
+                <div><p className="text-xs font-bold text-slate-500 uppercase">Ganar</p><p className="text-2xl font-bold text-green-600">+{scoringRules.win}</p></div>
+                <div><p className="text-xs font-bold text-slate-500 uppercase">Perder</p><p className="text-2xl font-bold text-slate-700">+{scoringRules.loss}</p></div>
                 <div><p className="text-xs font-bold text-slate-500 uppercase">WO</p><p className="text-2xl font-bold text-red-600">{scoringRules.lossWO}</p></div>
              </div>
           </div>
@@ -390,14 +441,13 @@ export default function AdminAutoFlat() {
           <div className="max-w-4xl mx-auto">
             <div className="flex justify-between items-center mb-6">
                <h3 className="text-xl font-bold">Auditoría de Partidos</h3>
-               {/* NUEVO: Botón para abrir modal manual */}
-               <button onClick={() => setIsManualModalOpen(true)} className="bg-slate-900 text-white px-4 py-2 text-sm rounded font-bold hover:bg-slate-800">+ Añadir Resultado Manual</button>
+               <button onClick={() => setIsManualModalOpen(true)} className="bg-slate-900 text-white px-4 py-2 text-sm rounded font-bold hover:bg-slate-800 shadow-sm">+ Añadir Resultado Manual</button>
             </div>
             
             <div className="space-y-4">
-              {reportedMatches.length === 0 && <p className="text-slate-500 text-center py-10">Sin partidos jugados.</p>}
+              {reportedMatches.length === 0 && <p className="text-slate-500 text-center py-10 bg-white border border-slate-200 rounded-lg">Sin partidos jugados. Añade uno manual o espera a los jugadores.</p>}
               {reportedMatches.map((m: any) => (
-                <div key={m.id} className="bg-white border border-slate-200 rounded-lg p-6 flex justify-between items-center">
+                <div key={m.id} className="bg-white border border-slate-200 rounded-lg p-6 flex justify-between items-center shadow-sm">
                   <div>
                     <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded uppercase mr-2">{m.groupName}</span>
                     <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${m.status === 'approved' ? 'bg-green-100 text-green-700' : m.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -406,12 +456,12 @@ export default function AdminAutoFlat() {
                     <p className="font-bold text-lg mt-3">{m.winnerName} <span className="text-slate-400 font-normal mx-2">derrotó a</span> {m.loserName}</p>
                     <p className="text-sm font-bold text-slate-600">Score: {m.score}</p>
                   </div>
-                  <button onClick={() => deleteMatch(m.id)} className="border border-slate-300 text-red-500 px-4 py-2 rounded text-xs font-bold hover:bg-red-50">Borrar</button>
+                  <button onClick={() => deleteMatch(m.id)} className="border border-slate-300 text-red-500 px-4 py-2 rounded text-xs font-bold hover:bg-red-50 transition">Borrar</button>
                 </div>
               ))}
             </div>
 
-            {/* NUEVO: Modal de Resultado Manual */}
+            {/* MODAL CON AUTOCOMPLETADO (SELECTS) */}
             {isManualModalOpen && (
               <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
                 <div className="bg-white w-full max-w-md border border-slate-200 rounded-lg shadow-xl overflow-hidden">
@@ -422,14 +472,32 @@ export default function AdminAutoFlat() {
                   <div className="p-6 space-y-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1">Grupo</label>
-                      <select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, groupName: e.target.value})}>
+                      <select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, groupName: e.target.value, winnerName: '', loserName: ''})}>
                         <option value="">Selecciona un grupo...</option>
                         {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
                       </select>
                     </div>
-                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Ganador (Nombre Exacto)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})} /></div>
-                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Perdedor (Nombre Exacto)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})} /></div>
-                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Score (Ej: 6-4 6-2)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, score: e.target.value})} /></div>
+                    
+                    {manualMatch.groupName && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">Ganador</label>
+                          <select className="w-full p-2 border border-slate-300 rounded outline-none" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
+                            <option value="">Selecciona al ganador...</option>
+                            {groups[manualMatch.groupName]?.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">Perdedor</label>
+                          <select className="w-full p-2 border border-slate-300 rounded outline-none" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                            <option value="">Selecciona al perdedor...</option>
+                            {groups[manualMatch.groupName]?.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Score (Ej: 6-4 6-2)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none uppercase" value={manualMatch.score} onChange={e => setManualMatch({...manualMatch, score: e.target.value})} placeholder="Ej: 6-4 6-2 o WO" /></div>
                   </div>
                   <div className="p-4 bg-slate-50 border-t flex justify-end gap-3">
                     <button onClick={() => setIsManualModalOpen(false)} className="px-4 py-2 text-slate-600 font-semibold text-sm">Cancelar</button>
@@ -453,15 +521,16 @@ export default function AdminAutoFlat() {
                 {Object.keys(groups).map((gName) => {
                     const standings = calculateStandings(gName); 
                     return (
-                        <div key={gName} className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                        <div key={gName} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
                             <div className="bg-slate-100 p-4 border-b border-slate-200"><h4 className="font-bold">{gName}</h4></div>
                             <table className="w-full text-left">
                                 <thead className="bg-slate-50 text-slate-500 text-[10px] font-bold uppercase border-b border-slate-200">
                                     <tr><th className="p-4">Pos</th><th className="p-4">Jugador</th><th className="p-4 text-center">PJ</th><th className="p-4 text-center">PG</th><th className="p-4 text-center">% Games</th><th className="p-4 text-center font-black">PTS</th></tr>
                                 </thead>
                                 <tbody>
+                                    {standings.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-xs text-slate-400">Grupo vacío</td></tr>}
                                     {standings.map((s: any, i: number) => (
-                                        <tr key={s.name} className="border-b border-slate-100"><td className="p-4 text-slate-400 font-bold">{i + 1}</td><td className="p-4 font-bold">{s.name}</td><td className="p-4 text-center">{s.PJ}</td><td className="p-4 text-center">{s.PG}</td><td className="p-4 text-center">{s.pctGames.toFixed(1)}%</td><td className="p-4 text-center text-slate-900 font-black text-lg">{s.Pts}</td></tr>
+                                        <tr key={s.name} className="border-b border-slate-100 hover:bg-slate-50 transition"><td className="p-4 text-slate-400 font-bold">{i + 1}</td><td className="p-4 font-bold">{s.name}</td><td className="p-4 text-center">{s.PJ}</td><td className="p-4 text-center">{s.PG}</td><td className="p-4 text-center">{s.pctGames.toFixed(1)}%</td><td className="p-4 text-center text-slate-900 font-black text-lg">{s.Pts}</td></tr>
                                     ))}
                                 </tbody>
                             </table>
