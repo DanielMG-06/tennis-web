@@ -18,6 +18,7 @@ export default function AdminAutoFlat() {
   const [view, setView] = useState('main'); 
   const [step, setStep] = useState('groups'); 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false); // NUEVO: Modal de resultado manual
   
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [activeTournament, setActiveTournament] = useState<any>(null);
@@ -26,6 +27,7 @@ export default function AdminAutoFlat() {
   
   const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', regDate: '', startDate: '', endDate: '' });
   const [editT, setEditT] = useState<any>({}); 
+  const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', score: '', groupName: '' }); // NUEVO: Datos del resultado manual
 
   const [search, setSearch] = useState('');
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
@@ -60,6 +62,7 @@ export default function AdminAutoFlat() {
 
     const fetchPlayers = async () => {
       try {
+        // AQUI ESTÁ EL CAMBIO QUE HICISTE ANTES (Buscando en 'players')
         const snap = await getDocs(collection(db, "players")); 
         setAppPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (e) { console.error(e); }
@@ -165,6 +168,20 @@ export default function AdminAutoFlat() {
   const deleteMatch = async (matchId: string) => {
     if(!confirm("¿Borrar este resultado?")) return;
     await deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", matchId));
+  };
+
+  // NUEVO: Función para agregar un partido manualmente
+  const handleAddManualMatch = async () => {
+    if (!manualMatch.winnerName || !manualMatch.loserName || !manualMatch.score || !manualMatch.groupName) {
+      return alert("Por favor completa todos los campos del partido.");
+    }
+    await addDoc(collection(db, "tournaments", activeTournament.id, "matches"), {
+      ...manualMatch,
+      status: 'approved', // Automáticamente aprobado porque lo pone el admin
+      createdAt: serverTimestamp()
+    });
+    setIsManualModalOpen(false);
+    setManualMatch({ winnerName: '', loserName: '', score: '', groupName: '' });
   };
 
   const addPlayerToGroup = (p: any, gName: string) => {
@@ -371,7 +388,12 @@ export default function AdminAutoFlat() {
 
         {step === 'history' && (
           <div className="max-w-4xl mx-auto">
-            <h3 className="text-xl font-bold mb-6">Auditoría de Partidos</h3>
+            <div className="flex justify-between items-center mb-6">
+               <h3 className="text-xl font-bold">Auditoría de Partidos</h3>
+               {/* NUEVO: Botón para abrir modal manual */}
+               <button onClick={() => setIsManualModalOpen(true)} className="bg-slate-900 text-white px-4 py-2 text-sm rounded font-bold hover:bg-slate-800">+ Añadir Resultado Manual</button>
+            </div>
+            
             <div className="space-y-4">
               {reportedMatches.length === 0 && <p className="text-slate-500 text-center py-10">Sin partidos jugados.</p>}
               {reportedMatches.map((m: any) => (
@@ -388,6 +410,34 @@ export default function AdminAutoFlat() {
                 </div>
               ))}
             </div>
+
+            {/* NUEVO: Modal de Resultado Manual */}
+            {isManualModalOpen && (
+              <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white w-full max-w-md border border-slate-200 rounded-lg shadow-xl overflow-hidden">
+                  <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                    <h2 className="font-bold">Añadir Partido (Modo Admin)</h2>
+                    <button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 font-bold">&times;</button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Grupo</label>
+                      <select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, groupName: e.target.value})}>
+                        <option value="">Selecciona un grupo...</option>
+                        {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </div>
+                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Ganador (Nombre Exacto)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})} /></div>
+                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Perdedor (Nombre Exacto)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})} /></div>
+                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Score (Ej: 6-4 6-2)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, score: e.target.value})} /></div>
+                  </div>
+                  <div className="p-4 bg-slate-50 border-t flex justify-end gap-3">
+                    <button onClick={() => setIsManualModalOpen(false)} className="px-4 py-2 text-slate-600 font-semibold text-sm">Cancelar</button>
+                    <button onClick={handleAddManualMatch} className="px-4 py-2 bg-slate-900 text-white font-bold text-sm rounded">Forzar Resultado</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
