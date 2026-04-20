@@ -8,7 +8,7 @@ import {
   serverTimestamp, doc, setDoc, getDocs, deleteDoc, getDoc, updateDoc 
 } from 'firebase/firestore';
 
-export default function AdminAutoFlat() {
+export default function AdminFinalMaster() {
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -25,7 +25,7 @@ export default function AdminAutoFlat() {
   const [appPlayers, setAppPlayers] = useState<any[]>([]);
   const [reportedMatches, setReportedMatches] = useState<any[]>([]); 
   
-  const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '' });
+  const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '', status: 'Activo' });
   const [editT, setEditT] = useState<any>({}); 
   const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', score: '', groupName: '' });
 
@@ -33,19 +33,12 @@ export default function AdminAutoFlat() {
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
   const [scoringRules, setScoringRules] = useState({ win: 3, loss: 0, winWO: 3, lossWO: 0 });
 
-  // 1. AUTENTICACIÓN
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
         const adminDoc = await getDoc(doc(db, "admins", currentUser.uid));
-        if (adminDoc.exists()) {
-          setIsAdmin(true);
-        } else {
-          setIsAdmin(false);
-          alert("Acceso denegado: No tienes permisos de administrador.");
-          signOut(auth);
-        }
+        setIsAdmin(adminDoc.exists());
       } else {
         setUser(null);
         setIsAdmin(false);
@@ -55,492 +48,206 @@ export default function AdminAutoFlat() {
     return () => unsubscribe();
   }, []);
 
-  // 2. CARGA DE TORNEOS Y JUGADORES
   useEffect(() => {
     if (!isAdmin) return;
     const unsubT = onSnapshot(query(collection(db, "tournaments"), orderBy("createdAt", "desc")), (snap) => {
       setTournaments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-
     const fetchPlayers = async () => {
-      try {
-        const snap = await getDocs(collection(db, "players")); 
-        setAppPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (e) { console.error("Error cargando jugadores:", e); }
+      const snap = await getDocs(collection(db, "players")); 
+      setAppPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     };
     fetchPlayers();
     return () => unsubT();
   }, [isAdmin]);
 
-  // 3. CARGA DE PARTIDOS DEL TORNEO ACTIVO
   useEffect(() => {
     if (!activeTournament || !isAdmin) return;
     setEditT(activeTournament);
-
-    // 🧹 1. LIMPIEZA INMEDIATA: Borramos los datos "fantasma" del torneo anterior
     setGroups({ "Grupo A": [], "Grupo B": [] });
-    setScoringRules({ win: 3, loss: 0, winWO: 3, lossWO: 0 });
-    setReportedMatches([]);
-    setSearch('');
-
-    // 🔍 2. Cargar la configuración de ESTE torneo específico
+    
     const loadConfig = async () => {
       const gDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
-      if (gDoc.exists() && gDoc.data().structure) {
-        setGroups(gDoc.data().structure);
-      }
-      
+      if (gDoc.exists()) setGroups(gDoc.data().structure);
       const rDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
-      if (rDoc.exists() && rDoc.data().win !== undefined) {
-        setScoringRules(rDoc.data() as any);
-      }
+      if (rDoc.exists()) setScoringRules(rDoc.data() as any);
     }
     loadConfig();
 
-    const unsubM = onSnapshot(query(collection(db, "tournaments", activeTournament.id, "matches"), orderBy("createdAt", "desc")), (snap) => {
+    return onSnapshot(query(collection(db, "tournaments", activeTournament.id, "matches"), orderBy("createdAt", "desc")), (snap) => {
       setReportedMatches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    return () => unsubM();
   }, [activeTournament, isAdmin]);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try { await signInWithEmailAndPassword(auth, email, password); } 
-    catch (error) { alert("Credenciales incorrectas. Intenta de nuevo."); }
-  };
-
-  // CÁLCULO DE POSICIONES
-  const calculateStandings = (groupName: string) => {
-    const players = groups[groupName] || [];
-    let stats: any = {};
-    players.forEach((p: any) => { stats[p.name] = { name: p.name, PJ: 0, PG: 0, PP: 0, Pts: 0, GW: 0, GL: 0 }; });
-
-    const isPastDeadline = activeTournament?.endDate ? new Date() > new Date(activeTournament.endDate) : false;
-    const validMatches = reportedMatches.filter(m => m.groupName === groupName && (m.status === 'approved' || (m.status === 'pending' && isPastDeadline)));
-
-    validMatches.forEach(m => {
-      const isWO = m.score.toUpperCase() === 'WO';
-      const winner = stats[m.winnerName]; const loser = stats[m.loserName];
-
-      if(winner) { winner.PJ++; winner.PG++; winner.Pts += isWO ? scoringRules.winWO : scoringRules.win; if(isWO) winner.GW += 12; }
-      if(loser) { loser.PJ++; loser.PP++; loser.Pts += isWO ? scoringRules.lossWO : scoringRules.loss; if(isWO) loser.GL += 12; }
-
-      if(!isWO && winner && loser && m.score) {
-        const sets = m.score.trim().split(' ');
-        sets.forEach((set: string) => {
-          const parts = set.split('-');
-          if(parts.length === 2) {
-            let w = parseInt(parts[0]); let l = parseInt(parts[1]); 
-            if(!isNaN(w) && !isNaN(l)) {
-              if(w >= 10 || l >= 10 || (w === 7 && l === 6) || (w === 6 && l === 7)) {
-                winner.GW += (w > l ? 1 : 0); loser.GW += (l > w ? 1 : 0);
-              } else {
-                winner.GW += w; winner.GL += l; loser.GW += l; loser.GL += w;
-              }
-            }
-          }
-        });
-      }
-    });
-
-    return Object.values(stats).map((s: any) => {
-      const totalGames = s.GW + s.GL;
-      s.pctGames = totalGames === 0 ? 0 : (s.GW / totalGames) * 100;
-      return s;
-    }).sort((a: any, b: any) => b.Pts !== a.Pts ? b.Pts - a.Pts : b.pctGames - a.pctGames);
-  };
-
-  // CREAR TORNEO
   const handleCreate = async () => {
-    if(!newT.name || !newT.price) return alert("El nombre y el precio son obligatorios");
-    await addDoc(collection(db, "tournaments"), { 
-      ...newT, 
-      status: 'Inscripciones', 
-      createdAt: serverTimestamp() 
-    });
+    if(!newT.name || !newT.price) return alert("Faltan datos");
+    // Aseguramos que el status sea 'Activo' para que la App lo vea
+    await addDoc(collection(db, "tournaments"), { ...newT, status: 'Activo', createdAt: serverTimestamp() });
     setIsModalOpen(false);
-    setNewT({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '' });
   };
 
-  const handleUpdateTournament = async () => {
-    if(!editT.name) return alert("El nombre no puede estar vacío.");
-    try {
-      await updateDoc(doc(db, "tournaments", activeTournament.id), { ...editT });
-      alert("¡Torneo actualizado correctamente!");
-      setActiveTournament({ ...activeTournament, ...editT });
-    } catch (e) { alert("Error al actualizar el torneo."); }
+  const handleDeleteFull = async () => {
+    if (prompt("Escribe ELIMINAR") !== 'ELIMINAR') return;
+    const matches = await getDocs(collection(db, "tournaments", activeTournament.id, "matches"));
+    await Promise.all(matches.docs.map(d => deleteDoc(d.ref)));
+    await deleteDoc(doc(db, "tournaments", activeTournament.id));
+    setView('main');
   };
 
-  // BORRADO PROFUNDO DEL TORNEO
-  const handleDeleteTournament = async () => {
-    const confirmacion = prompt("🚨 PELIGRO: Escribe 'ELIMINAR' en mayúsculas para destruir este torneo y TODOS sus resultados permanentemente:");
-    if (confirmacion !== 'ELIMINAR') return;
-    
-    try {
-      const matchesSnap = await getDocs(collection(db, "tournaments", activeTournament.id, "matches"));
-      const matchDeletions = matchesSnap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(matchDeletions);
+  if (authLoading) return <div className="p-20 text-center font-bold">Cargando Sistema...</div>;
 
-      await deleteDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
-      await deleteDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
-
-      await deleteDoc(doc(db, "tournaments", activeTournament.id));
-      
-      alert("Torneo y todos sus datos eliminados con éxito. 🧹");
-      setView('main'); 
-      setActiveTournament(null); // Limpiamos la memoria
-    } catch (e) { 
-      alert("Hubo un error al limpiar la base de datos."); 
-      console.error(e);
-    }
-  };
-
-  const saveConfig = async () => {
-    const tRef = doc(db, "tournaments", activeTournament.id);
-    await setDoc(doc(tRef, "configuration", "groups"), { structure: groups, updatedAt: serverTimestamp() }, { merge: true });
-    await setDoc(doc(tRef, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true });
-    alert("¡Configuración y Grupos guardados en la nube! ☁️");
-  };
-
-  const deleteMatch = async (matchId: string) => {
-    if(!confirm("¿Borrar este resultado permanentemente?")) return;
-    await deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", matchId));
-  };
-
-  // AÑADIR RESULTADO MANUAL
-  const handleAddManualMatch = async () => {
-    if (!manualMatch.winnerName || !manualMatch.loserName || !manualMatch.score || !manualMatch.groupName) {
-      return alert("Por favor completa todos los campos del partido.");
-    }
-    if (manualMatch.winnerName === manualMatch.loserName) {
-      return alert("El ganador y el perdedor no pueden ser la misma persona.");
-    }
-    await addDoc(collection(db, "tournaments", activeTournament.id, "matches"), {
-      ...manualMatch,
-      status: 'approved', 
-      createdAt: serverTimestamp()
-    });
-    setIsManualModalOpen(false);
-    setManualMatch({ winnerName: '', loserName: '', score: '', groupName: '' });
-  };
-
-  // MANEJO DE GRUPOS
-  const addPlayerToGroup = (p: any, gName: string) => {
-    if (groups[gName].find((x: any) => x.id === p.id)) return;
-    setGroups((prev: any) => ({ ...prev, [gName]: [...prev[gName], { id: p.id, name: p.name || 'Sin Nombre', type: 'app' }] }));
-  };
-  const removePlayerFromGroup = (pId: string, gName: string) => setGroups((prev: any) => ({ ...prev, [gName]: prev[gName].filter((x: any) => x.id !== pId) }));
-  const addGroup = () => setGroups({ ...groups, [`Grupo ${String.fromCharCode(65 + Object.keys(groups).length)}`]: [] });
-  const removeGroup = (gName: string) => {
-    if(!confirm(`¿Seguro que deseas eliminar el ${gName}?`)) return;
-    const newGroups = { ...groups }; delete newGroups[gName]; setGroups(newGroups);
-  };
-  const addExternalPlayer = (gName: string) => {
-    const name = prompt(`Nombre del invitado:`);
-    if (name) addPlayerToGroup({ id: `ext_${Date.now()}`, name: name.trim(), type: 'external' }, gName);
-  };
-
-  const filteredPlayers = appPlayers.filter(p => {
-    const term = search.toLowerCase();
-    const nameMatch = (p.name || '').toLowerCase().includes(term);
-    const dniMatch = String(p.dni || '').includes(term);
-    return nameMatch || dniMatch;
-  });
-
-  // RENDERIZADO - LOGIN
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 font-bold uppercase tracking-widest">Verificando seguridad...</div>;
-
-  if (!user || !isAdmin) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans p-6 text-slate-900">
-        <div className="bg-white p-10 border border-slate-200 w-full max-w-md rounded-lg shadow-sm">
-          <div className="text-center mb-10 border-b border-slate-100 pb-6">
-            <h1 className="text-3xl font-black uppercase tracking-tight text-slate-900">Panel de Torneos</h1>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-2">Acceso Administrativo</p>
-          </div>
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Correo Electrónico</label>
-              <input type="email" required placeholder="admin@correo.com" className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-green-600 focus:bg-slate-50 transition-colors" onChange={(e) => setEmail(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Contraseña</label>
-              <input type="password" required placeholder="••••••••" className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-green-600 focus:bg-slate-50 transition-colors" onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <button type="submit" className="w-full bg-green-600 text-white font-black uppercase tracking-widest py-4 rounded hover:bg-green-700 transition-colors mt-4">Iniciar Sesión</button>
-          </form>
-        </div>
+  if (!user || !isAdmin) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <div className="bg-white p-10 rounded-xl shadow-2xl w-full max-w-sm">
+        <h1 className="text-2xl font-black text-center mb-8 uppercase tracking-tighter">Acceso Admin</h1>
+        <input type="email" placeholder="Email" className="w-full p-4 mb-4 border-2 rounded-lg font-bold" onChange={e => setEmail(e.target.value)} />
+        <input type="password" placeholder="Password" className="w-full p-4 mb-6 border-2 rounded-lg font-bold" onChange={e => setPassword(e.target.value)} />
+        <button onClick={() => signInWithEmailAndPassword(auth, email, password)} className="w-full bg-black text-white p-4 rounded-lg font-black hover:bg-slate-800 transition">ENTRAR</button>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // RENDERIZADO - MAIN (CARTELERA)
-  if (view === 'main') {
-    return (
-      <div className="p-10 bg-slate-50 min-h-screen text-slate-900 font-sans">
-        <header className="flex justify-between items-center mb-10 border-b border-slate-200 pb-6">
-          <div><h1 className="text-3xl font-bold">Torneos Activos</h1><p className="text-xs text-slate-400 font-bold uppercase mt-1">Admin: {user.email}</p></div>
-          <div className="flex gap-4">
-             <button onClick={() => {signOut(auth); setView('main');}} className="text-slate-500 font-bold hover:text-red-500 transition">Cerrar Sesión</button>
-             <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 text-white px-6 py-2 rounded font-semibold hover:bg-slate-800 transition">+ Nuevo Torneo</button>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {tournaments.length === 0 && <p className="text-slate-500">No hay torneos creados. Crea uno nuevo.</p>}
-          {tournaments.map(t => (
-            <div key={t.id} className="bg-white p-6 border border-slate-200 rounded-lg hover:border-slate-400 transition">
-              <h2 className="text-xl font-bold mb-2">{t.name}</h2>
-              <span className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded font-bold uppercase">{t.category}</span>
-              <p className="text-slate-500 text-sm mt-4 mb-6">Cierre: <span className="font-semibold">{t.endDate || 'No definido'}</span></p>
-              <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full border border-slate-300 py-2 rounded font-semibold hover:bg-slate-50">Administrar</button>
-            </div>
-          ))}
-        </div>
-
-        {isModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white w-full max-w-2xl border border-slate-200 rounded-lg shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                <h2 className="text-xl font-bold">Crear Torneo</h2>
-                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 font-bold text-xl">&times;</button>
-              </div>
-              <div className="p-6 grid grid-cols-2 gap-4 max-h-[70vh] overflow-y-auto">
-                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, name: e.target.value})} /></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label><select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, category: e.target.value})}><option>3ra</option><option>4ta</option><option>5ta</option></select></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label><input type="number" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, price: e.target.value})} /></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha Inicio</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, startDate: e.target.value})} /></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha Cierre</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, endDate: e.target.value})} /></div>
-                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Yape</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, yape: e.target.value})} /></div>
-                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Descripción</label><textarea rows={3} className="w-full p-2 border border-slate-300 rounded outline-none resize-none" onChange={e => setNewT({...newT, desc: e.target.value})} /></div>
-              </div>
-              <div className="p-6 bg-slate-50 border-t flex justify-end gap-3">
-                <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-600 font-semibold rounded">Cancelar</button>
-                <button onClick={handleCreate} className="px-6 py-2 bg-slate-900 text-white font-semibold rounded">Publicar</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // RENDERIZADO - ADMINISTRACIÓN DEL TORNEO
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
-      <div className="bg-white border-b border-slate-200 px-8 py-4 flex justify-between items-center sticky top-0 z-40 shadow-sm">
-        <div className="flex items-center gap-6">
-          <button onClick={() => { setView('main'); setActiveTournament(null); }} className="text-slate-500 font-bold hover:text-slate-900">&larr; Volver</button>
-          <h2 className="text-xl font-bold border-l border-slate-300 pl-6 uppercase">{activeTournament.name}</h2>
-          <div className="flex gap-4 ml-8">
-            <button onClick={()=>setStep('groups')} className={`text-sm font-semibold pb-1 ${step==='groups'?'border-b-2 border-slate-900':'text-slate-500'}`}>Grupos</button>
-            <button onClick={()=>setStep('rules')} className={`text-sm font-semibold pb-1 ${step==='rules'?'border-b-2 border-slate-900':'text-slate-500'}`}>Reglas</button>
-            <button onClick={()=>setStep('history')} className={`text-sm font-semibold pb-1 ${step==='history'?'border-b-2 border-slate-900':'text-slate-500'}`}>Historial P2P</button>
-            <button onClick={()=>setStep('standings')} className={`text-sm font-semibold pb-1 ${step==='standings'?'border-b-2 border-slate-900':'text-slate-500'}`}>Posiciones</button>
-            <button onClick={()=>setStep('settings')} className={`text-sm font-semibold pb-1 ${step==='settings'?'border-b-2 border-slate-900':'text-slate-500'}`}>Ajustes</button>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+      {view === 'main' ? (
+        <div className="p-10">
+          <div className="flex justify-between items-center mb-10 border-b pb-6">
+            <h1 className="text-4xl font-black tracking-tighter uppercase">Panel Maestro</h1>
+            <button onClick={() => setIsModalOpen(true)} className="bg-green-600 text-white px-8 py-3 rounded-full font-bold shadow-lg hover:scale-105 transition">+ Crear Torneo</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {tournaments.map(t => (
+              <div key={t.id} className="bg-white p-6 rounded-2xl border-2 border-slate-100 shadow-sm hover:border-slate-300 transition">
+                <h2 className="text-xl font-black mb-1">{t.name}</h2>
+                <div className="flex gap-2 mb-4">
+                  <span className="text-[10px] font-bold bg-slate-100 px-2 py-1 rounded uppercase">{t.category}</span>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${t.status === 'Activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{t.status}</span>
+                </div>
+                <button onClick={() => { setActiveTournament(t); setView('manage'); }} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold">Gestionar</button>
+              </div>
+            ))}
           </div>
         </div>
-        <button onClick={saveConfig} className="bg-slate-900 text-white px-6 py-2 rounded font-semibold hover:bg-slate-800 transition">Guardar Cambios</button>
-      </div>
-
-      <div className="flex-1 p-8">
-        
-        {step === 'groups' && ( 
-          <div className="grid grid-cols-12 gap-6">
-            <div className="col-span-4 bg-white border border-slate-200 rounded-lg p-0 h-fit sticky top-24 overflow-hidden shadow-sm">
-              <div className="bg-slate-900 p-4">
-                <h3 className="text-sm font-bold text-white mb-3 uppercase tracking-widest flex justify-between items-center">
-                  Base de Jugadores <span className="bg-green-500 text-white text-[10px] px-2 py-1 rounded-full">{appPlayers.length} total</span>
-                </h3>
-                <div className="relative">
-                  <span className="absolute left-3 top-3.5 text-slate-400">🔍</span>
-                  <input type="text" placeholder="Ej: nicolas, 7421..." className="w-full p-3 pl-9 border-0 rounded shadow-inner text-slate-900 text-sm font-bold outline-none focus:ring-2 focus:ring-green-500" value={search} onChange={e => setSearch(e.target.value)} />
-                </div>
-              </div>
-              <div className="max-h-[50vh] overflow-y-auto p-2 bg-slate-50">
-                {appPlayers.length === 0 && <p className="text-xs text-slate-500 text-center py-8">Nadie ha iniciado sesión en tu app de Flutter todavía.</p>}
-                {search.length > 0 && filteredPlayers.length === 0 && <p className="text-xs text-slate-500 text-center py-8 font-bold">No hay nadie llamado "{search}"</p>}
-                {filteredPlayers.map(p => (
-                  <div key={p.id} className="p-3 border border-slate-200 rounded bg-white shadow-sm mb-2 flex flex-col gap-2">
-                    <div className="flex justify-between items-center"><span className="font-bold text-sm text-slate-800">{p.name || 'Sin nombre'}</span><span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded">DNI: {p.dni || '---'}</span></div>
-                    <div className="flex flex-wrap gap-1 mt-1 border-t border-slate-100 pt-2">
-                      {Object.keys(groups).map(g => <button key={g} onClick={() => addPlayerToGroup(p, g)} className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-1 rounded font-bold hover:bg-green-500 hover:text-white transition-all">+ {g}</button>)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+      ) : (
+        <div className="p-6">
+          <div className="flex items-center gap-4 mb-6">
+            <button onClick={() => setView('main')} className="bg-white border p-2 rounded-full shadow-sm hover:bg-slate-100">&larr;</button>
+            <h2 className="text-2xl font-black uppercase tracking-tight">{activeTournament.name}</h2>
+          </div>
+          
+          <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+            <div className="flex bg-slate-50 p-2 gap-2 border-b">
+               {['groups', 'history', 'standings', 'settings'].map(s => (
+                 <button key={s} onClick={() => setStep(s)} className={`px-6 py-2 rounded-full text-xs font-black uppercase transition ${step === s ? 'bg-white shadow-md text-black' : 'text-slate-400 hover:text-slate-600'}`}>{s}</button>
+               ))}
             </div>
-            <div className="col-span-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-slate-800">Grupos Armados</h3>
-                <button onClick={addGroup} className="text-sm font-bold bg-slate-200 px-4 py-2 rounded hover:bg-slate-300 transition">+ Añadir Grupo</button>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {Object.keys(groups).map(gName => (
-                  <div key={gName} className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-                      <div className="flex items-center gap-3"><h4 className="font-bold">{gName}</h4><button onClick={() => removeGroup(gName)} className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded hover:bg-red-100">Eliminar</button></div>
-                      <button onClick={() => addExternalPlayer(gName)} className="text-xs font-bold text-blue-600 hover:underline">+ Invitado</button>
-                    </div>
-                    <div className="space-y-2">
-                      {groups[gName].length === 0 && <p className="text-xs text-slate-400 italic">Grupo vacío</p>}
-                      {groups[gName].map((p: any) => (
-                        <div key={p.id} className="flex justify-between items-center p-2 bg-slate-50 border border-slate-100 rounded text-sm">
-                          <span className="font-semibold flex items-center gap-2"><span className={`w-2 h-2 rounded-full ${p.type === 'external' ? 'bg-orange-500' : 'bg-green-500'}`}></span>{p.name}</span>
-                          <button onClick={() => removePlayerFromGroup(p.id, gName)} className="text-slate-400 hover:text-red-500 font-bold">&times;</button>
+
+            <div className="p-8">
+              {step === 'groups' && (
+                <div className="grid grid-cols-12 gap-10">
+                  <div className="col-span-4 border-r pr-10">
+                    <h3 className="font-black text-sm uppercase mb-4 text-slate-400">Base de Datos</h3>
+                    <input type="text" placeholder="Buscar jugador..." className="w-full p-3 border-2 rounded-xl mb-4 outline-none focus:border-green-500" onChange={e => setSearch(e.target.value)} />
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {appPlayers.filter(p => p.name?.toLowerCase().includes(search.toLowerCase())).map(p => (
+                        <div key={p.id} className="p-3 bg-slate-50 rounded-xl border flex justify-between items-center group">
+                          <span className="font-bold text-sm">{p.name}</span>
+                          <div className="flex gap-1">
+                            <button onClick={() => setGroups({...groups, "Grupo A": [...groups["Grupo A"], p]})} className="bg-white border px-2 py-1 rounded text-[10px] font-black hover:bg-green-500 hover:text-white">+A</button>
+                            <button onClick={() => setGroups({...groups, "Grupo B": [...groups["Grupo B"], p]})} className="bg-white border px-2 py-1 rounded text-[10px] font-black hover:bg-blue-500 hover:text-white">+B</button>
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {step === 'settings' && (
-          <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-lg p-8 shadow-sm">
-            <h3 className="text-xl font-bold mb-6">Ajustes Generales del Torneo</h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Torneo</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none focus:border-green-500" value={editT.name || ''} onChange={e => setEditT({...editT, name: e.target.value})} /></div>
-              <div><label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label><select className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.category || '3ra'} onChange={e => setEditT({...editT, category: e.target.value})}><option>3ra</option><option>4ta</option><option>5ta</option></select></div>
-              <div><label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label><input type="number" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.price || ''} onChange={e => setEditT({...editT, price: e.target.value})} /></div>
-              <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.startDate || ''} onChange={e => setEditT({...editT, startDate: e.target.value})} /></div>
-              <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Cierre</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.endDate || ''} onChange={e => setEditT({...editT, endDate: e.target.value})} /></div>
-              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Número Yape</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.yape || ''} onChange={e => setEditT({...editT, yape: e.target.value})} /></div>
-              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Descripción y Reglas Adicionales</label><textarea rows={4} className="w-full p-3 border border-slate-300 rounded outline-none resize-none" value={editT.desc || ''} onChange={e => setEditT({...editT, desc: e.target.value})} /></div>
-              
-              <div className="col-span-2 flex justify-between items-center mt-6 border-t border-slate-200 pt-6">
-                 <button onClick={handleDeleteTournament} className="text-red-600 font-bold px-4 py-2 rounded hover:bg-red-50 transition border border-transparent hover:border-red-200">
-                   🗑️ Eliminar Torneo Permanentemente
-                 </button>
-                 <button onClick={handleUpdateTournament} className="bg-slate-900 text-white px-8 py-3 rounded font-bold hover:bg-slate-800 transition shadow-md">
-                   Guardar Ajustes del Torneo
-                 </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {step === 'rules' && ( 
-          <div className="max-w-2xl mx-auto bg-white border border-slate-200 rounded-lg p-8 shadow-sm">
-             <h3 className="text-xl font-bold mb-6">Reglas de Puntuación</h3>
-             <div className="grid grid-cols-2 gap-4 mb-8">
-                <button onClick={()=>setScoringRules({win:3, loss:0, winWO:3, lossWO:0})} className={`p-4 border rounded text-left transition ${scoringRules.win === 3 && scoringRules.loss === 0 ? 'border-slate-900 bg-slate-50' : 'border-slate-300 hover:bg-slate-50'}`}><p className="font-bold mb-1">Estandar</p><p className="text-xs text-slate-500">Victoria +3 | Derrota 0 | WO 0</p></button>
-                <button onClick={()=>setScoringRules({win:3, loss:1, winWO:3, lossWO:-2})} className={`p-4 border rounded text-left transition ${scoringRules.loss === 1 ? 'border-slate-900 bg-slate-50' : 'border-slate-300 hover:bg-slate-50'}`}><p className="font-bold mb-1">Competitivo</p><p className="text-xs text-slate-500">Victoria +3 | Derrota +1 | WO -2</p></button>
-             </div>
-             <div className="bg-slate-50 border border-slate-200 p-6 rounded grid grid-cols-3 gap-4 text-center">
-                <div><p className="text-xs font-bold text-slate-500 uppercase">Ganar</p><p className="text-2xl font-bold text-green-600">+{scoringRules.win}</p></div>
-                <div><p className="text-xs font-bold text-slate-500 uppercase">Perder</p><p className="text-2xl font-bold text-slate-700">+{scoringRules.loss}</p></div>
-                <div><p className="text-xs font-bold text-slate-500 uppercase">WO</p><p className="text-2xl font-bold text-red-600">{scoringRules.lossWO}</p></div>
-             </div>
-          </div>
-        )}
-
-        {step === 'history' && (
-          <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between items-center mb-6">
-               <h3 className="text-xl font-bold">Auditoría de Partidos</h3>
-               <button onClick={() => setIsManualModalOpen(true)} className="bg-slate-900 text-white px-4 py-2 text-sm rounded font-bold hover:bg-slate-800 shadow-sm">+ Añadir Resultado Manual</button>
-            </div>
-            
-            <div className="space-y-4">
-              {reportedMatches.length === 0 && <p className="text-slate-500 text-center py-10 bg-white border border-slate-200 rounded-lg">Sin partidos jugados. Añade uno manual o espera a los jugadores.</p>}
-              {reportedMatches.map((m: any) => (
-                <div key={m.id} className="bg-white border border-slate-200 rounded-lg p-6 flex justify-between items-center shadow-sm">
-                  <div>
-                    <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded uppercase mr-2">{m.groupName}</span>
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${m.status === 'approved' ? 'bg-green-100 text-green-700' : m.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                      {m.status === 'approved' ? 'Confirmado' : m.status === 'rejected' ? 'Rechazado' : 'Pendiente del rival'}
-                    </span>
-                    <p className="font-bold text-lg mt-3">{m.winnerName} <span className="text-slate-400 font-normal mx-2">derrotó a</span> {m.loserName}</p>
-                    <p className="text-sm font-bold text-slate-600">Score: {m.score}</p>
-                  </div>
-                  <button onClick={() => deleteMatch(m.id)} className="border border-slate-300 text-red-500 px-4 py-2 rounded text-xs font-bold hover:bg-red-50 transition">Borrar</button>
-                </div>
-              ))}
-            </div>
-
-            {/* MODAL CON AUTOCOMPLETADO (SELECTS) */}
-            {isManualModalOpen && (
-              <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white w-full max-w-md border border-slate-200 rounded-lg shadow-xl overflow-hidden">
-                  <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                    <h2 className="font-bold">Añadir Partido (Modo Admin)</h2>
-                    <button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 font-bold">&times;</button>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">Grupo</label>
-                      <select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setManualMatch({...manualMatch, groupName: e.target.value, winnerName: '', loserName: ''})}>
-                        <option value="">Selecciona un grupo...</option>
-                        {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
+                  <div className="col-span-8 grid grid-cols-2 gap-6">
+                    {Object.keys(groups).map(g => (
+                      <div key={g} className="bg-slate-50 p-4 rounded-2xl border-2 border-dashed border-slate-200">
+                        <h4 className="font-black uppercase text-xs mb-4 text-slate-500">{g}</h4>
+                        {groups[g].map((p: any) => (
+                          <div key={p.id} className="bg-white p-2 mb-2 rounded-lg shadow-sm text-sm font-bold border flex justify-between">
+                            {p.name}
+                            <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-red-400">&times;</button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    <div className="col-span-2 mt-4">
+                      <button onClick={async () => {
+                        await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups});
+                        alert("Grupos guardados");
+                      }} className="w-full bg-black text-white p-4 rounded-2xl font-black shadow-lg">SINCRONIZAR GRUPOS CON LA APP</button>
                     </div>
-                    
-                    {manualMatch.groupName && (
-                      <>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">Ganador</label>
-                          <select className="w-full p-2 border border-slate-300 rounded outline-none" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
-                            <option value="">Selecciona al ganador...</option>
-                            {groups[manualMatch.groupName]?.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-slate-500 mb-1">Perdedor</label>
-                          <select className="w-full p-2 border border-slate-300 rounded outline-none" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
-                            <option value="">Selecciona al perdedor...</option>
-                            {groups[manualMatch.groupName]?.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                          </select>
-                        </div>
-                      </>
-                    )}
-
-                    <div><label className="block text-xs font-bold text-slate-500 mb-1">Score (Ej: 6-4 6-2)</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none uppercase" value={manualMatch.score} onChange={e => setManualMatch({...manualMatch, score: e.target.value})} placeholder="Ej: 6-4 6-2 o WO" /></div>
-                  </div>
-                  <div className="p-4 bg-slate-50 border-t flex justify-end gap-3">
-                    <button onClick={() => setIsManualModalOpen(false)} className="px-4 py-2 text-slate-600 font-semibold text-sm">Cancelar</button>
-                    <button onClick={handleAddManualMatch} className="px-4 py-2 bg-slate-900 text-white font-bold text-sm rounded">Forzar Resultado</button>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
 
-        {step === 'standings' && (
-          <div className="max-w-5xl mx-auto">
-             <div className="flex justify-between items-end mb-8">
-               <h3 className="text-2xl font-bold text-slate-800">Posiciones (Solo Confirmados)</h3>
-               {activeTournament?.endDate && new Date() > new Date(activeTournament.endDate) && (
-                 <span className="bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded">Torneo Finalizado: Pendientes Auto-Aprobados</span>
-               )}
-             </div>
-             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {Object.keys(groups).map((gName) => {
-                    const standings = calculateStandings(gName); 
-                    return (
-                        <div key={gName} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-                            <div className="bg-slate-100 p-4 border-b border-slate-200"><h4 className="font-bold">{gName}</h4></div>
-                            <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 text-[10px] font-bold uppercase border-b border-slate-200">
-                                    <tr><th className="p-4">Pos</th><th className="p-4">Jugador</th><th className="p-4 text-center">PJ</th><th className="p-4 text-center">PG</th><th className="p-4 text-center">% Games</th><th className="p-4 text-center font-black">PTS</th></tr>
-                                </thead>
-                                <tbody>
-                                    {standings.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-xs text-slate-400">Grupo vacío</td></tr>}
-                                    {standings.map((s: any, i: number) => (
-                                        <tr key={s.name} className="border-b border-slate-100 hover:bg-slate-50 transition"><td className="p-4 text-slate-400 font-bold">{i + 1}</td><td className="p-4 font-bold">{s.name}</td><td className="p-4 text-center">{s.PJ}</td><td className="p-4 text-center">{s.PG}</td><td className="p-4 text-center">{s.pctGames.toFixed(1)}%</td><td className="p-4 text-center text-slate-900 font-black text-lg">{s.Pts}</td></tr>
-                                    ))}
-                                </tbody>
-                            </table>
+              {step === 'history' && (
+                <div>
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="font-black uppercase text-slate-400">Registro de Resultados</h3>
+                    <button onClick={() => setIsManualModalOpen(true)} className="bg-black text-white px-6 py-2 rounded-full font-bold">+ Resultado Manual</button>
+                  </div>
+                  <div className="space-y-4">
+                    {reportedMatches.map(m => (
+                      <div key={m.id} className="p-4 bg-white border-2 rounded-2xl flex justify-between items-center">
+                        <div>
+                          <span className="text-[10px] font-black bg-slate-100 px-2 py-1 rounded-full uppercase mr-2">{m.groupName}</span>
+                          <span className="font-bold">{m.winnerName} <span className="text-slate-400 mx-2">vs</span> {m.loserName}</span>
                         </div>
-                    );
-                })}
-             </div>
+                        <div className="flex items-center gap-6">
+                          <span className="font-black text-xl">{m.score}</span>
+                          <button onClick={() => deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id))} className="text-red-500 font-bold hover:bg-red-50 p-2 rounded-full transition">🗑️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {step === 'settings' && (
+                <div className="py-20 text-center">
+                  <div className="max-w-md mx-auto p-10 border-4 border-red-50 border-dashed rounded-3xl">
+                    <h3 className="text-2xl font-black mb-4">Zona de Peligro</h3>
+                    <p className="text-slate-400 text-sm mb-8">Si borras este torneo, se eliminarán todos los jugadores de las tablas y el historial de fotos para siempre.</p>
+                    <button onClick={handleDeleteFull} className="bg-red-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl hover:bg-red-700 transition">ELIMINAR TODO EL TORNEO</button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {isManualModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl">
+            <h2 className="text-2xl font-black mb-6 uppercase tracking-tighter">Añadir Resultado</h2>
+            <div className="space-y-4">
+              <select className="w-full p-4 border-2 rounded-xl font-bold bg-slate-50" onChange={e => setManualMatch({...manualMatch, groupName: e.target.value})}>
+                 <option>Elegir Grupo</option>
+                 {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              <select className="w-full p-4 border-2 rounded-xl font-bold bg-slate-50" onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
+                 <option>Ganador</option>
+                 {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+              </select>
+              <select className="w-full p-4 border-2 rounded-xl font-bold bg-slate-50" onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                 <option>Perdedor</option>
+                 {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+              </select>
+              <input type="text" placeholder="Score (ej: 6-4 6-2)" className="w-full p-4 border-2 rounded-xl font-bold" onChange={e => setManualMatch({...manualMatch, score: e.target.value})} />
+            </div>
+            <div className="flex gap-4 mt-8">
+              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-4 border-2 rounded-xl font-bold">Cancelar</button>
+              <button onClick={async () => {
+                await addDoc(collection(db, "tournaments", activeTournament.id, "matches"), { ...manualMatch, status: 'approved', createdAt: serverTimestamp() });
+                setIsManualModalOpen(false);
+              }} className="flex-1 p-4 bg-black text-white rounded-xl font-black">GUARDAR</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
