@@ -16,7 +16,7 @@ export default function AdminAutoFlat() {
   const [password, setPassword] = useState('');
 
   const [view, setView] = useState('main'); 
-  const [step, setStep] = useState('groups'); // groups, rules, history, standings, settings
+  const [step, setStep] = useState('groups'); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   
   const [tournaments, setTournaments] = useState<any[]>([]);
@@ -25,7 +25,7 @@ export default function AdminAutoFlat() {
   const [reportedMatches, setReportedMatches] = useState<any[]>([]); 
   
   const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', regDate: '', startDate: '', endDate: '' });
-  const [editT, setEditT] = useState<any>({}); // Estado para editar el torneo
+  const [editT, setEditT] = useState<any>({}); 
 
   const [search, setSearch] = useState('');
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
@@ -60,7 +60,7 @@ export default function AdminAutoFlat() {
 
     const fetchPlayers = async () => {
       try {
-        const snap = await getDocs(collection(db, "users")); 
+        const snap = await getDocs(collection(db, "players")); 
         setAppPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (e) { console.error(e); }
     };
@@ -70,8 +70,6 @@ export default function AdminAutoFlat() {
 
   useEffect(() => {
     if (!activeTournament || !isAdmin) return;
-    
-    // Cargar datos al editar
     setEditT(activeTournament);
 
     const unsubM = onSnapshot(query(collection(db, "tournaments", activeTournament.id, "matches"), orderBy("createdAt", "desc")), (snap) => {
@@ -138,23 +136,30 @@ export default function AdminAutoFlat() {
     setNewT({ name: '', category: '3ra', yape: '', desc: '', price: '', regDate: '', startDate: '', endDate: '' });
   };
 
-  // NUEVO: Función para actualizar torneo existente
   const handleUpdateTournament = async () => {
     if(!editT.name || !editT.price) return alert("El nombre y precio no pueden estar vacíos.");
     try {
       await updateDoc(doc(db, "tournaments", activeTournament.id), { ...editT });
       alert("¡Torneo actualizado correctamente!");
       setActiveTournament({ ...activeTournament, ...editT });
-    } catch (e) {
-      alert("Error al actualizar el torneo.");
-    }
+    } catch (e) { alert("Error al actualizar el torneo."); }
+  };
+
+  const handleDeleteTournament = async () => {
+    const confirmacion = prompt("🚨 PELIGRO: Escribe 'ELIMINAR' para borrar este torneo permanentemente:");
+    if (confirmacion !== 'ELIMINAR') return;
+    try {
+      await deleteDoc(doc(db, "tournaments", activeTournament.id));
+      alert("Torneo eliminado con éxito.");
+      setView('main'); 
+    } catch (e) { alert("Error al eliminar el torneo."); }
   };
 
   const saveConfig = async () => {
     const tRef = doc(db, "tournaments", activeTournament.id);
     await setDoc(doc(tRef, "configuration", "groups"), { structure: groups, updatedAt: serverTimestamp() }, { merge: true });
     await setDoc(doc(tRef, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true });
-    alert("¡Configuración de Grupos y Reglas guardada!");
+    alert("¡Configuración guardada!");
   };
 
   const deleteMatch = async (matchId: string) => {
@@ -162,28 +167,21 @@ export default function AdminAutoFlat() {
     await deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", matchId));
   };
 
-  // Lógica de Grupos
   const addPlayerToGroup = (p: any, gName: string) => {
     if (groups[gName].find((x: any) => x.id === p.id)) return;
     setGroups((prev: any) => ({ ...prev, [gName]: [...prev[gName], { id: p.id, name: p.name || 'Sin Nombre', type: 'app' }] }));
   };
   const removePlayerFromGroup = (pId: string, gName: string) => setGroups((prev: any) => ({ ...prev, [gName]: prev[gName].filter((x: any) => x.id !== pId) }));
   const addGroup = () => setGroups({ ...groups, [`Grupo ${String.fromCharCode(65 + Object.keys(groups).length)}`]: [] });
-  
-  // NUEVO: Eliminar grupo completo
   const removeGroup = (gName: string) => {
-    if(!confirm(`¿Seguro que deseas eliminar el ${gName} y todos sus jugadores?`)) return;
-    const newGroups = { ...groups };
-    delete newGroups[gName];
-    setGroups(newGroups);
+    if(!confirm(`¿Seguro que deseas eliminar el ${gName}?`)) return;
+    const newGroups = { ...groups }; delete newGroups[gName]; setGroups(newGroups);
   };
-
   const addExternalPlayer = (gName: string) => {
     const name = prompt(`Nombre del invitado:`);
     if (name) addPlayerToGroup({ id: `ext_${Date.now()}`, name: name, type: 'external' }, gName);
   };
 
-  // NUEVO: Buscador de DNI blindado (Convierte a String por si acaso)
   const filteredPlayers = appPlayers.filter(p => {
     const term = search.toLowerCase();
     const nameMatch = (p.name || '').toLowerCase().includes(term);
@@ -198,19 +196,19 @@ export default function AdminAutoFlat() {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans p-6 text-slate-900">
         <div className="bg-white p-10 border border-slate-200 w-full max-w-md rounded-lg shadow-sm">
           <div className="text-center mb-10 border-b border-slate-100 pb-6">
-            <h1 className="text-3xl font-black uppercase tracking-tight text-slate-900">Centro de Mando</h1>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-2">Acceso Restringido</p>
+            <h1 className="text-3xl font-black uppercase tracking-tight text-slate-900">Panel de Torneos</h1>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-2">Acceso Administrativo</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Correo Administrador</label>
-              <input type="email" required className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-slate-900" onChange={(e) => setEmail(e.target.value)} />
+              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Correo Electrónico</label>
+              <input type="email" required placeholder="admin@correo.com" className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-green-600 focus:bg-slate-50 transition-colors" onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Contraseña</label>
-              <input type="password" required className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-slate-900" onChange={(e) => setPassword(e.target.value)} />
+              <input type="password" required placeholder="••••••••" className="w-full p-4 bg-white border-2 border-slate-200 rounded text-slate-900 font-bold outline-none focus:border-green-600 focus:bg-slate-50 transition-colors" onChange={(e) => setPassword(e.target.value)} />
             </div>
-            <button type="submit" className="w-full bg-slate-900 text-white font-black uppercase tracking-widest py-4 rounded hover:bg-slate-800 mt-4">Ingresar al Sistema</button>
+            <button type="submit" className="w-full bg-green-600 text-white font-black uppercase tracking-widest py-4 rounded hover:bg-green-700 transition-colors mt-4">Iniciar Sesión</button>
           </form>
         </div>
       </div>
@@ -221,10 +219,7 @@ export default function AdminAutoFlat() {
     return (
       <div className="p-10 bg-slate-50 min-h-screen text-slate-900 font-sans">
         <header className="flex justify-between items-center mb-10 border-b border-slate-200 pb-6">
-          <div>
-             <h1 className="text-3xl font-bold">Torneos Activos</h1>
-             <p className="text-xs text-slate-400 font-bold uppercase mt-1">Admin: {user.email}</p>
-          </div>
+          <div><h1 className="text-3xl font-bold">Torneos Activos</h1><p className="text-xs text-slate-400 font-bold uppercase mt-1">Admin: {user.email}</p></div>
           <div className="flex gap-4">
              <button onClick={handleLogout} className="text-slate-500 font-bold hover:text-red-500 transition">Cerrar Sesión</button>
              <button onClick={() => setIsModalOpen(true)} className="bg-slate-900 text-white px-6 py-2 rounded font-semibold hover:bg-slate-800 transition">+ Nuevo Torneo</button>
@@ -253,10 +248,10 @@ export default function AdminAutoFlat() {
                 <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, name: e.target.value})} /></div>
                 <div><label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label><select className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, category: e.target.value})}><option>3ra</option><option>4ta</option><option>5ta</option></select></div>
                 <div><label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label><input type="number" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, price: e.target.value})} /></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, startDate: e.target.value})} /></div>
-                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Cierre (Auto-aprobación)</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, endDate: e.target.value})} /></div>
-                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Número Yape</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, yape: e.target.value})} /></div>
-                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Reglas y Descripción</label><textarea rows={3} className="w-full p-2 border border-slate-300 rounded outline-none resize-none" onChange={e => setNewT({...newT, desc: e.target.value})} /></div>
+                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha Inicio</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, startDate: e.target.value})} /></div>
+                <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha Cierre</label><input type="date" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, endDate: e.target.value})} /></div>
+                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Yape</label><input type="text" className="w-full p-2 border border-slate-300 rounded outline-none" onChange={e => setNewT({...newT, yape: e.target.value})} /></div>
+                <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Descripción</label><textarea rows={3} className="w-full p-2 border border-slate-300 rounded outline-none resize-none" onChange={e => setNewT({...newT, desc: e.target.value})} /></div>
               </div>
               <div className="p-6 bg-slate-50 border-t flex justify-end gap-3">
                 <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-600 font-semibold rounded">Cancelar</button>
@@ -293,44 +288,20 @@ export default function AdminAutoFlat() {
             <div className="col-span-4 bg-white border border-slate-200 rounded-lg p-0 h-fit sticky top-24 overflow-hidden shadow-sm">
               <div className="bg-slate-900 p-4">
                 <h3 className="text-sm font-bold text-white mb-3 uppercase tracking-widest flex justify-between items-center">
-                  Base de Jugadores
-                  <span className="bg-green-500 text-white text-[10px] px-2 py-1 rounded-full">{appPlayers.length} total</span>
+                  Base de Jugadores <span className="bg-green-500 text-white text-[10px] px-2 py-1 rounded-full">{appPlayers.length} total</span>
                 </h3>
                 <div className="relative">
                   <span className="absolute left-3 top-3.5 text-slate-400">🔍</span>
-                  <input 
-                    type="text" 
-                    placeholder="Ej: nicolas, 7421..." 
-                    className="w-full p-3 pl-9 border-0 rounded shadow-inner text-slate-900 text-sm font-bold outline-none focus:ring-2 focus:ring-green-500 transition-all" 
-                    value={search} 
-                    onChange={e => setSearch(e.target.value)} 
-                  />
+                  <input type="text" placeholder="Ej: nicolas, 7421..." className="w-full p-3 pl-9 border-0 rounded shadow-inner text-slate-900 text-sm font-bold outline-none focus:ring-2 focus:ring-green-500" value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
               </div>
-              
               <div className="max-h-[50vh] overflow-y-auto p-2 bg-slate-50">
-                {search.length > 0 && filteredPlayers.length === 0 && (
-                  <p className="text-xs text-slate-500 text-center py-8 font-bold">No hay nadie llamado "{search}"</p>
-                )}
-                {search.length === 0 && appPlayers.length === 0 && (
-                  <div className="text-center py-8 px-4">
-                    <p className="text-sm text-slate-600 font-bold mb-2">Base de datos vacía</p>
-                    <p className="text-xs text-slate-400">Nadie ha iniciado sesión en tu app de Flutter todavía.</p>
-                  </div>
-                )}
-                
+                {search.length > 0 && filteredPlayers.length === 0 && <p className="text-xs text-slate-500 text-center py-8 font-bold">No hay nadie llamado "{search}"</p>}
                 {filteredPlayers.map(p => (
-                  <div key={p.id} className="p-3 border border-slate-200 rounded bg-white shadow-sm mb-2 flex flex-col gap-2 hover:border-green-400 transition-colors">
-                    <div className="flex justify-between items-center">
-                      <span className="font-bold text-sm text-slate-800">{p.name || 'Sin nombre'}</span>
-                      <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded">DNI: {p.dni || '---'}</span>
-                    </div>
+                  <div key={p.id} className="p-3 border border-slate-200 rounded bg-white shadow-sm mb-2 flex flex-col gap-2">
+                    <div className="flex justify-between items-center"><span className="font-bold text-sm text-slate-800">{p.name || 'Sin nombre'}</span><span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded">DNI: {p.dni || '---'}</span></div>
                     <div className="flex flex-wrap gap-1 mt-1 border-t border-slate-100 pt-2">
-                      {Object.keys(groups).map(g => (
-                        <button key={g} onClick={() => addPlayerToGroup(p, g)} className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-1 rounded font-bold hover:bg-green-500 hover:text-white hover:border-green-500 transition-all">
-                          + {g}
-                        </button>
-                      ))}
+                      {Object.keys(groups).map(g => <button key={g} onClick={() => addPlayerToGroup(p, g)} className="text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-1 rounded font-bold hover:bg-green-500 hover:text-white transition-all">+ {g}</button>)}
                     </div>
                   </div>
                 ))}
@@ -345,10 +316,7 @@ export default function AdminAutoFlat() {
                 {Object.keys(groups).map(gName => (
                   <div key={gName} className="bg-white border border-slate-200 rounded-lg p-4">
                     <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-                      <div className="flex items-center gap-3">
-                         <h4 className="font-bold">{gName}</h4>
-                         <button onClick={() => removeGroup(gName)} className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded hover:bg-red-100">Eliminar</button>
-                      </div>
+                      <div className="flex items-center gap-3"><h4 className="font-bold">{gName}</h4><button onClick={() => removeGroup(gName)} className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded hover:bg-red-100">Eliminar</button></div>
                       <button onClick={() => addExternalPlayer(gName)} className="text-xs font-bold text-blue-600 hover:underline">+ Invitado</button>
                     </div>
                     <div className="space-y-2">
@@ -371,56 +339,27 @@ export default function AdminAutoFlat() {
           <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-lg p-8">
             <h3 className="text-xl font-bold mb-6">Ajustes Generales del Torneo</h3>
             <div className="grid grid-cols-2 gap-6">
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Torneo</label>
-                <input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.name || ''} onChange={e => setEditT({...editT, name: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label>
-                <select className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.category || '3ra'} onChange={e => setEditT({...editT, category: e.target.value})}>
-                  <option>3ra</option><option>4ta</option><option>5ta</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label>
-                <input type="number" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.price || ''} onChange={e => setEditT({...editT, price: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Inicio</label>
-                <input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.startDate || ''} onChange={e => setEditT({...editT, startDate: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Cierre (Auto-aprobación)</label>
-                <input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.endDate || ''} onChange={e => setEditT({...editT, endDate: e.target.value})} />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-slate-500 mb-1">Número Yape</label>
-                <input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.yape || ''} onChange={e => setEditT({...editT, yape: e.target.value})} />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-bold text-slate-500 mb-1">Descripción y Reglas Adicionales</label>
-                <textarea rows={4} className="w-full p-3 border border-slate-300 rounded outline-none resize-none" value={editT.desc || ''} onChange={e => setEditT({...editT, desc: e.target.value})} />
-              </div>
-              <div className="col-span-2 flex justify-end mt-4">
-                 <button onClick={handleUpdateTournament} className="bg-slate-900 text-white px-8 py-3 rounded font-bold hover:bg-slate-800 transition">
-                   Guardar Ajustes del Torneo
-                 </button>
+              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Nombre del Torneo</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.name || ''} onChange={e => setEditT({...editT, name: e.target.value})} /></div>
+              <div><label className="block text-xs font-bold text-slate-500 mb-1">Categoría</label><select className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.category || '3ra'} onChange={e => setEditT({...editT, category: e.target.value})}><option>3ra</option><option>4ta</option><option>5ta</option></select></div>
+              <div><label className="block text-xs font-bold text-slate-500 mb-1">Precio (S/)</label><input type="number" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.price || ''} onChange={e => setEditT({...editT, price: e.target.value})} /></div>
+              <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.startDate || ''} onChange={e => setEditT({...editT, startDate: e.target.value})} /></div>
+              <div><label className="block text-xs font-bold text-slate-500 mb-1">Fecha de Cierre</label><input type="date" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.endDate || ''} onChange={e => setEditT({...editT, endDate: e.target.value})} /></div>
+              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Número Yape</label><input type="text" className="w-full p-3 border border-slate-300 rounded outline-none" value={editT.yape || ''} onChange={e => setEditT({...editT, yape: e.target.value})} /></div>
+              <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">Descripción y Reglas Adicionales</label><textarea rows={4} className="w-full p-3 border border-slate-300 rounded outline-none resize-none" value={editT.desc || ''} onChange={e => setEditT({...editT, desc: e.target.value})} /></div>
+              <div className="col-span-2 flex justify-between items-center mt-6 border-t border-slate-200 pt-6">
+                 <button onClick={handleDeleteTournament} className="text-red-600 font-bold px-4 py-2 rounded hover:bg-red-50 transition border border-transparent hover:border-red-200">🗑️ Eliminar Torneo Permanentemente</button>
+                 <button onClick={handleUpdateTournament} className="bg-slate-900 text-white px-8 py-3 rounded font-bold hover:bg-slate-800 transition shadow-md">Guardar Ajustes del Torneo</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* REGLAS, HISTORIAL y POSICIONES se mantienen idénticos */}
         {step === 'rules' && ( 
           <div className="max-w-2xl mx-auto bg-white border border-slate-200 rounded-lg p-8">
              <h3 className="text-xl font-bold mb-6">Reglas de Puntuación</h3>
              <div className="grid grid-cols-2 gap-4 mb-8">
-                <button onClick={()=>setScoringRules({win:3, loss:0, winWO:3, lossWO:0})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50">
-                  <p className="font-bold mb-1">Estandar</p><p className="text-xs text-slate-500">Victoria +3 | Derrota 0 | WO 0</p>
-                </button>
-                <button onClick={()=>setScoringRules({win:3, loss:1, winWO:3, lossWO:-2})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50">
-                  <p className="font-bold mb-1">Competitivo</p><p className="text-xs text-slate-500">Victoria +3 | Derrota +1 | WO -2</p>
-                </button>
+                <button onClick={()=>setScoringRules({win:3, loss:0, winWO:3, lossWO:0})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50"><p className="font-bold mb-1">Estandar</p><p className="text-xs text-slate-500">Victoria +3 | Derrota 0 | WO 0</p></button>
+                <button onClick={()=>setScoringRules({win:3, loss:1, winWO:3, lossWO:-2})} className="p-4 border border-slate-300 rounded text-left hover:bg-slate-50"><p className="font-bold mb-1">Competitivo</p><p className="text-xs text-slate-500">Victoria +3 | Derrota +1 | WO -2</p></button>
              </div>
              <div className="bg-slate-50 border border-slate-200 p-6 rounded grid grid-cols-3 gap-4 text-center">
                 <div><p className="text-xs font-bold text-slate-500 uppercase">Ganar</p><p className="text-2xl font-bold">+{scoringRules.win}</p></div>
