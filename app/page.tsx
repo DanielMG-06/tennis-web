@@ -34,8 +34,12 @@ export default function AdminFinalMaster() {
   const [isWO, setIsWO] = useState(false);
 
   const [search, setSearch] = useState('');
-  const [guestName, setGuestName] = useState(''); // NUEVO: Estado para el jugador invitado
+  const [guestName, setGuestName] = useState(''); 
+  
+  // NUEVO: Gestión de Grupos Dinámicos
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
+
   const [scoringRules, setScoringRules] = useState({ win: 3, loss: 0, winWO: 3, lossWO: -2 });
 
   useEffect(() => {
@@ -70,11 +74,15 @@ export default function AdminFinalMaster() {
 
   useEffect(() => {
     if (!activeTournament || !isAdmin) return;
-    setGroups({ "Grupo A": [], "Grupo B": [] });
     
     const loadConfig = async () => {
       const gDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
-      if (gDoc.exists() && gDoc.data().structure) setGroups(gDoc.data().structure);
+      if (gDoc.exists() && gDoc.data().structure) {
+        setGroups(gDoc.data().structure);
+      } else {
+        // Valores por defecto si no hay nada guardado
+        setGroups({ "Grupo A": [], "Grupo B": [] });
+      }
       const rDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
       if (rDoc.exists() && rDoc.data().win !== undefined) setScoringRules(rDoc.data() as any);
     }
@@ -117,7 +125,7 @@ export default function AdminFinalMaster() {
   };
 
   // =========================================================================
-  // NUEVO: CREAR JUGADOR INVITADO
+  // GESTIÓN DE INVITADOS
   // =========================================================================
   const handleAddGuest = async () => {
     if (!guestName.trim()) return alert("Escribe el nombre del invitado");
@@ -125,14 +133,59 @@ export default function AdminFinalMaster() {
     
     try {
       const docRef = await addDoc(collection(db, "players"), newGuest);
-      // Lo añadimos instantáneamente a la lista visual de la izquierda
-      setAppPlayers([{ id: docRef.id, name: newGuest.name }, ...appPlayers]);
+      setAppPlayers([{ id: docRef.id, ...newGuest }, ...appPlayers]);
       setGuestName('');
     } catch (e) {
       alert("Error al crear invitado");
     }
   };
 
+  const handleDeleteGuest = async (guestId: string, name: string) => {
+    if (!confirm(`¿Estás seguro de eliminar a ${name} permanentemente?`)) return;
+    try {
+      await deleteDoc(doc(db, "players", guestId));
+      setAppPlayers(appPlayers.filter(p => p.id !== guestId));
+    } catch (e) {
+      alert("Error al eliminar invitado");
+    }
+  };
+
+  // =========================================================================
+  // GESTIÓN DINÁMICA DE GRUPOS
+  // =========================================================================
+  const handleAddGroup = () => {
+    const groupCount = Object.keys(groups).length;
+    const newGroupName = `Grupo ${String.fromCharCode(65 + groupCount)}`; // Ej: A, B, C, D...
+    if (!groups[newGroupName]) {
+      setGroups({ ...groups, [newGroupName]: [] });
+    } else {
+      setGroups({ ...groups, [`Nuevo Grupo ${groupCount + 1}`]: [] });
+    }
+  };
+
+  const handleRenameGroup = (oldName: string, newName: string) => {
+    setEditingGroup(null);
+    const cleanName = newName.trim();
+    if (!cleanName || cleanName === oldName || groups[cleanName]) return;
+    
+    const newGroups = { ...groups };
+    newGroups[cleanName] = newGroups[oldName];
+    delete newGroups[oldName];
+    setGroups(newGroups);
+  };
+
+  const handleDeleteGroup = (gName: string) => {
+    if (groups[gName].length > 0) {
+      if (!confirm(`El ${gName} tiene jugadores. ¿Eliminar de todas formas?`)) return;
+    }
+    const newGroups = { ...groups };
+    delete newGroups[gName];
+    setGroups(newGroups);
+  };
+
+  // =========================================================================
+  // GESTIÓN DE FIXTURES Y LLAVES
+  // =========================================================================
   const handleGenerateFixture = async () => {
     if (!confirm("Se crearán los partidos y se activará el torneo. ¿Seguro?")) return;
     const matchesRef = collection(db, "tournaments", activeTournament.id, "matches");
@@ -153,13 +206,18 @@ export default function AdminFinalMaster() {
 
   const handleGenerateBrackets = async () => {
     if (!confirm("Esto cierra grupos y crea Semifinales. ¿Seguro?")) return;
-    const standingsA = calculateStandings("Grupo A");
-    const standingsB = calculateStandings("Grupo B");
-    if (standingsA.length < 2 || standingsB.length < 2) return alert("Faltan jugadores para las llaves.");
+    
+    const groupKeys = Object.keys(groups);
+    if (groupKeys.length < 2) return alert("Se necesitan al menos 2 grupos para hacer llaves.");
+    
+    const standings1 = calculateStandings(groupKeys[0]);
+    const standings2 = calculateStandings(groupKeys[1]);
+    
+    if (standings1.length < 2 || standings2.length < 2) return alert("Faltan jugadores para las llaves.");
     
     const bracketRef = collection(db, "tournaments", activeTournament.id, "bracket_matches");
-    await addDoc(bracketRef, { round: 'Semifinal 1', player1: standingsA[0].name, player2: standingsB[1].name, winnerName: '', loserName: '', score: '', status: 'pending', createdAt: serverTimestamp() });
-    await addDoc(bracketRef, { round: 'Semifinal 2', player1: standingsB[0].name, player2: standingsA[1].name, winnerName: '', loserName: '', score: '', status: 'pending', createdAt: serverTimestamp() });
+    await addDoc(bracketRef, { round: 'Semifinal 1', player1: standings1[0].name, player2: standings2[1].name, winnerName: '', loserName: '', score: '', status: 'pending', createdAt: serverTimestamp() });
+    await addDoc(bracketRef, { round: 'Semifinal 2', player1: standings2[0].name, player2: standings1[1].name, winnerName: '', loserName: '', score: '', status: 'pending', createdAt: serverTimestamp() });
 
     await updateDoc(doc(db, "tournaments", activeTournament.id), { status: 'Fase Final' });
     setActiveTournament({...activeTournament, status: 'Fase Final'});
@@ -209,6 +267,9 @@ export default function AdminFinalMaster() {
     }).sort((a: any, b: any) => b.Pts !== a.Pts ? b.Pts - a.Pts : b.pctGames - a.pctGames);
   };
 
+  // =========================================================================
+  // INPUT DE SCORE AUTOMÁTICO
+  // =========================================================================
   const handleSetChange = (field: string, value: string, nextFieldId: string | null) => {
     const numericValue = value.replace(/\D/g, '').slice(0, 2);
     setSets(prev => ({ ...prev, [field]: numericValue }));
@@ -269,6 +330,9 @@ export default function AdminFinalMaster() {
     setIsWO(false);
   };
 
+  // =========================================================================
+  // RENDER PANTALLAS
+  // =========================================================================
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-slate-400 uppercase tracking-widest animate-pulse">Cargando...</p></div>;
 
   if (!user || !isAdmin) return (
@@ -320,7 +384,7 @@ export default function AdminFinalMaster() {
           </div>
           
           <div className="bg-white rounded-[40px] shadow-2xl border-2 border-slate-100 overflow-hidden">
-            <div className="flex flex-wrap bg-white px-6 pt-6 gap-2 border-b-2 border-slate-100">
+            <div className="flex flex-wrap bg-white px-6 pt-6 gap-2 border-b-2 border-slate-100 overflow-x-auto">
                {['groups', 'standings', 'history', 'brackets', 'rules', 'settings'].map(s => (
                  <button key={s} onClick={() => setStep(s)} className={`px-8 py-4 rounded-t-3xl text-xs font-black uppercase transition ${step === s ? 'bg-white shadow-[0_-4px_10px_-2px_rgba(0,0,0,0.05)] text-slate-900 border-t-2 border-x-2 border-slate-100' : 'text-slate-400 hover:bg-slate-50'}`}>
                     {s === 'groups' ? 'Grupos' : s === 'standings' ? 'Posiciones' : s === 'history' ? 'Resultados' : s === 'brackets' ? 'Llaves' : s === 'rules' ? 'Reglas' : 'Ajustes'}
@@ -330,12 +394,12 @@ export default function AdminFinalMaster() {
 
             <div className="p-10 bg-slate-50 min-h-[600px]">
               
-              {/* TAB: GRUPOS */}
+              {/* ======================= TAB: GRUPOS ======================= */}
               {step === 'groups' && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
                   <div className="lg:col-span-4 lg:border-r-2 border-slate-200 lg:pr-10">
                     
-                    {/* ZONA DE JUGADOR INVITADO (NUEVO) */}
+                    {/* CREAR INVITADO */}
                     <div className="mb-8 p-6 bg-purple-50 rounded-[20px] border-2 border-purple-100">
                       <h4 className="text-xs font-black text-purple-700 uppercase mb-3 tracking-widest">¿No tiene la App?</h4>
                       <p className="text-xs text-purple-600 mb-4 font-bold">Crea un jugador invitado para que puedas añadirlo a los grupos manualmente.</p>
@@ -345,43 +409,90 @@ export default function AdminFinalMaster() {
                       </div>
                     </div>
 
+                    {/* LISTA DE JUGADORES Y BOTONES DINÁMICOS */}
                     <h3 className="font-black text-sm uppercase mb-4 text-slate-400 tracking-widest">Base de Jugadores</h3>
                     <input type="text" placeholder="Buscar jugador..." className="w-full p-4 border-2 border-slate-200 rounded-2xl mb-6 font-bold outline-none focus:border-black" onChange={e => setSearch(e.target.value)} />
                     <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                       {appPlayers.filter(p => p.name?.toLowerCase().includes(search.toLowerCase())).map(p => (
-                        <div key={p.id} className="p-4 bg-white rounded-2xl border-2 flex justify-between items-center shadow-sm">
-                          <span className="font-bold text-sm">{p.name}</span>
-                          <div className="flex gap-2">
-                            <button onClick={() => setGroups({...groups, "Grupo A": [...(groups["Grupo A"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white transition">+A</button>
-                            <button onClick={() => setGroups({...groups, "Grupo B": [...(groups["Grupo B"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white transition">+B</button>
+                        <div key={p.id} className="p-4 bg-white rounded-2xl border-2 flex flex-col shadow-sm">
+                          <div className="flex justify-between items-center w-full">
+                            <span className="font-bold text-sm text-slate-800">{p.name}</span>
+                            {/* BOTÓN PARA BORRAR INVITADOS */}
+                            {p.isGuest && (
+                              <button onClick={() => handleDeleteGuest(p.id, p.name)} className="text-red-400 hover:text-red-600 bg-red-50 p-2 rounded-lg transition" title="Eliminar Invitado">
+                                <IconTrash />
+                              </button>
+                            )}
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="lg:col-span-8">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      {Object.keys(groups).map(g => (
-                        <div key={g} className="bg-white p-8 rounded-[30px] border-2 shadow-sm">
-                          <h4 className="font-black uppercase text-xl mb-6">{g}</h4>
-                          <div className="space-y-3">
-                            {groups[g].length === 0 && <p className="text-slate-400 font-bold text-sm">Grupo vacío</p>}
-                            {groups[g].map((p: any) => (
-                              <div key={p.id} className="bg-slate-50 p-4 rounded-xl border-2 text-sm font-bold flex justify-between items-center">
-                                {p.name}
-                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 h-8 w-8 rounded-lg flex items-center justify-center transition">&times;</button>
-                              </div>
+                          
+                          {/* BOTONES GENERADOS DINÁMICAMENTE SEGÚN LOS GRUPOS CREADOS */}
+                          <div className="flex flex-wrap gap-2 mt-4 border-t pt-3">
+                            {Object.keys(groups).map(gName => (
+                              <button 
+                                key={gName} 
+                                onClick={() => setGroups({...groups, [gName]: [...(groups[gName]||[]), p]})} 
+                                className="bg-slate-50 border-2 border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-black text-slate-500 hover:bg-black hover:text-white hover:border-black transition uppercase tracking-widest"
+                              >
+                                + {gName.substring(0, 8)}{gName.length > 8 ? '..' : ''}
+                              </button>
                             ))}
                           </div>
                         </div>
                       ))}
                     </div>
-                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Grupos guardados."); }} className="mt-10 w-full bg-black text-white p-5 rounded-2xl font-black shadow-xl hover:bg-slate-800 transition">GUARDAR GRUPOS</button>
+                  </div>
+                  
+                  {/* PANELES DE GRUPOS DINÁMICOS */}
+                  <div className="lg:col-span-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {Object.keys(groups).map(g => (
+                        <div key={g} className="bg-white p-8 rounded-[30px] border-2 border-slate-200 shadow-sm relative group">
+                          
+                          {/* EDICIÓN Y ELIMINACIÓN DE GRUPO */}
+                          <div className="flex justify-between items-center mb-6">
+                            {editingGroup === g ? (
+                              <input 
+                                autoFocus 
+                                defaultValue={g} 
+                                onBlur={(e) => handleRenameGroup(g, e.target.value)} 
+                                onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(g, e.currentTarget.value)} 
+                                className="font-black uppercase text-xl border-b-2 border-purple-600 outline-none w-3/4 text-purple-700" 
+                              />
+                            ) : (
+                              <h4 className="font-black uppercase text-xl cursor-pointer hover:text-purple-600 flex items-center" onClick={() => setEditingGroup(g)} title="Toca para editar">
+                                {g} <span className="ml-2 text-xs font-bold text-slate-300 bg-slate-50 px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition">Editar</span>
+                              </h4>
+                            )}
+                            <button onClick={() => handleDeleteGroup(g)} className="text-slate-300 hover:text-red-500 transition"><IconTrash /></button>
+                          </div>
+
+                          <div className="space-y-3">
+                            {groups[g].length === 0 && <p className="text-slate-400 font-bold text-sm">Grupo vacío</p>}
+                            {groups[g].map((p: any) => (
+                              <div key={p.id} className="bg-slate-50 p-4 rounded-xl border-2 border-slate-100 text-sm font-bold flex justify-between items-center">
+                                {p.name}
+                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 hover:bg-red-50 h-8 w-8 rounded-lg flex items-center justify-center transition">&times;</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      
+                      {/* BOTÓN PARA AÑADIR NUEVO GRUPO */}
+                      <button onClick={handleAddGroup} className="bg-transparent border-4 border-dashed border-slate-200 rounded-[30px] flex flex-col items-center justify-center p-8 hover:bg-slate-50 hover:border-purple-300 transition group min-h-[200px]">
+                        <div className="bg-slate-100 group-hover:bg-purple-100 text-slate-400 group-hover:text-purple-600 h-12 w-12 rounded-full flex items-center justify-center mb-4 transition">
+                          <span className="text-2xl font-black">+</span>
+                        </div>
+                        <span className="font-black text-slate-400 group-hover:text-purple-600 uppercase tracking-widest text-sm transition">Añadir Grupo</span>
+                      </button>
+                    </div>
+                    
+                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Grupos guardados."); }} className="mt-10 w-full bg-black text-white p-5 rounded-2xl font-black shadow-xl hover:bg-slate-800 transition tracking-widest">GUARDAR ESTRUCTURA DE GRUPOS</button>
                   </div>
                 </div>
               )}
 
-              {/* TAB: REGLAS */}
+              {/* ======================= TAB: REGLAS ======================= */}
               {step === 'rules' && (
                 <div className="max-w-4xl mx-auto py-4">
                   <div className="grid grid-cols-2 gap-8 mb-12">
@@ -394,11 +505,11 @@ export default function AdminFinalMaster() {
                 </div>
               )}
 
-              {/* TAB: RESULTADOS */}
+              {/* ======================= TAB: RESULTADOS ======================= */}
               {step === 'history' && (
                 <div className="max-w-5xl mx-auto">
                   <div className="flex justify-between items-center mb-10">
-                    <h3 className="font-black uppercase text-slate-400 text-sm">Monitor de Partidos</h3>
+                    <h3 className="font-black uppercase text-slate-400 text-sm tracking-widest">Monitor de Partidos</h3>
                     <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'group'}); setIsManualModalOpen(true); }} className="bg-black text-white px-8 py-4 rounded-full font-black shadow-lg hover:bg-slate-800">+ RESULTADO DE GRUPO</button>
                   </div>
                   <div className="space-y-4">
@@ -411,11 +522,11 @@ export default function AdminFinalMaster() {
                         <div className="flex items-center gap-6">
                           <span className="font-black text-3xl tracking-tighter mr-4">{m.score}</span>
                           
-                          {/* ESTADOS DE RESOLUCIÓN P2P */}
                           {m.status === 'rival_pending' && (
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">En Revisión P2P</span>
-                              <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-green-600 text-white font-bold text-[10px] px-3 py-2 rounded-lg hover:bg-green-700 transition">Aprobar</button>
+                              {/* Botón útil si el rival era invitado y no puede aprobar desde la app */}
+                              <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-green-600 text-white font-bold text-[10px] px-3 py-2 rounded-lg hover:bg-green-700 transition" title="Aprobar forzosamente (Útil para invitados)">Aprobar</button>
                             </div>
                           )}
                           
@@ -431,7 +542,7 @@ export default function AdminFinalMaster() {
                 </div>
               )}
 
-              {/* TAB: POSICIONES */}
+              {/* ======================= TAB: POSICIONES ======================= */}
               {step === 'standings' && (
                 <div className="max-w-6xl mx-auto grid grid-cols-1 xl:grid-cols-2 gap-10">
                   {Object.keys(groups).map((gName) => {
@@ -460,7 +571,7 @@ export default function AdminFinalMaster() {
                 </div>
               )}
 
-              {/* TAB: LLAVES */}
+              {/* ======================= TAB: LLAVES ======================= */}
               {step === 'brackets' && (
                 <div className="max-w-5xl mx-auto">
                   <div className="flex justify-between items-center mb-10">
@@ -490,7 +601,7 @@ export default function AdminFinalMaster() {
                   <div className="w-full max-w-lg p-12 bg-white border-4 border-red-100 border-dashed rounded-[40px] text-center shadow-sm">
                     <h3 className="text-3xl font-black mb-4">Zona Restringida</h3>
                     <p className="text-slate-500 font-bold mb-10">Eliminará el torneo, partidos, llaves y configuración de forma permanente.</p>
-                    <button onClick={handleDeleteFullTournament} className="w-full bg-red-600 text-white p-5 rounded-2xl font-black shadow-xl hover:bg-red-700 transition">ELIMINAR TORNEO</button>
+                    <button onClick={handleDeleteFullTournament} className="w-full bg-red-600 text-white p-5 rounded-2xl font-black shadow-xl">ELIMINAR TORNEO</button>
                   </div>
                 </div>
               )}
@@ -500,7 +611,7 @@ export default function AdminFinalMaster() {
       )}
 
       {/* =========================================================================
-          MODAL DE RESULTADOS MANUAL (ESTILO APP CON CASILLAS AUTOMÁTICAS)
+          MODAL DE RESULTADOS MANUAL (CON CASILLAS TIPO APP)
           ========================================================================= */}
       {isManualModalOpen && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -513,7 +624,7 @@ export default function AdminFinalMaster() {
               
               {/* SELECTORES DE PARTIDO / JUGADORES */}
               {manualMatch.type === 'bracket' ? (
-                <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none focus:border-black" onChange={e => {
+                <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none" onChange={e => {
                   const match = bracketMatches.find(bm => bm.id === e.target.value);
                   if(match) setManualMatch({...manualMatch, groupName: match.id, winnerName: match.player1, loserName: match.player2});
                 }}>
@@ -522,7 +633,7 @@ export default function AdminFinalMaster() {
                 </select>
               ) : (
                 <>
-                  <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none focus:border-black" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
+                  <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
                      <option value="">Selecciona el Grupo...</option>
                      {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
@@ -530,15 +641,15 @@ export default function AdminFinalMaster() {
                   {manualMatch.groupName && (
                     <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-3xl border-2 border-slate-100">
                       <div>
-                        <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase">Ganador</label>
-                        <select className="w-full p-4 border-2 border-green-300 rounded-2xl font-bold bg-white text-green-700 outline-none focus:border-green-500" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
+                        <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase tracking-widest">Ganador</label>
+                        <select className="w-full p-4 border-2 border-green-300 rounded-2xl font-bold bg-white text-green-700 outline-none" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase">Perdedor</label>
-                        <select className="w-full p-4 border-2 border-slate-200 rounded-2xl font-bold bg-white outline-none focus:border-black" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                        <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase tracking-widest">Perdedor</label>
+                        <select className="w-full p-4 border-2 border-slate-200 rounded-2xl font-bold bg-white outline-none" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
@@ -551,10 +662,10 @@ export default function AdminFinalMaster() {
               {/* TOGGLE W.O. */}
               <div className="flex items-center justify-between p-4 bg-orange-50 border-2 border-orange-100 rounded-2xl">
                 <span className="font-black text-orange-700">Victoria por W.O.</span>
-                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-6 h-6 accent-orange-600 cursor-pointer" />
+                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-6 h-6 accent-orange-600" />
               </div>
 
-              {/* CASILLAS NUMÉRICAS (Ocultas si es W.O.) */}
+              {/* CASILLAS NUMÉRICAS AUTO-FOCUS (Idénticas a la App) */}
               {!isWO && (
                 <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100">
                   <p className="text-[10px] font-black text-slate-400 text-center uppercase mb-4 tracking-widest">Score Exacto (Solo Números)</p>
@@ -562,32 +673,32 @@ export default function AdminFinalMaster() {
                   {/* SET 1 */}
                   <div className="flex items-center justify-center gap-4 mb-4">
                     <span className="font-black text-slate-400 w-12 text-right text-xs">SET 1</span>
-                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                   </div>
                   
                   {/* SET 2 */}
                   <div className="flex items-center justify-center gap-4 mb-6">
                     <span className="font-black text-slate-400 w-12 text-right text-xs">SET 2</span>
-                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                   </div>
 
                   {/* TOGGLE 3ER SET */}
-                  <div className="flex items-center justify-between mb-4 border-t-2 border-slate-200 pt-4">
+                  <div className="flex items-center justify-between mb-4 border-t-2 pt-4">
                     <span className="font-bold text-slate-500 text-sm">Super Tie-break (3er Set)</span>
-                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-5 h-5 accent-green-600 cursor-pointer" />
+                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-5 h-5 accent-green-600" />
                   </div>
 
                   {/* SET 3 */}
                   {hasThirdSet && (
                     <div className="flex items-center justify-center gap-4">
                       <span className="font-black text-slate-400 w-12 text-right text-xs">SET 3</span>
-                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                       <span className="font-black text-slate-300">-</span>
-                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
+                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
                     </div>
                   )}
                 </div>
@@ -595,8 +706,8 @@ export default function AdminFinalMaster() {
             </div>
             
             <div className="flex gap-4 mt-8">
-              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-5 border-2 border-slate-200 rounded-2xl font-black text-slate-500 hover:bg-slate-50 transition">CANCELAR</button>
-              <button onClick={handleAddManualMatch} className="flex-1 p-5 bg-black text-white rounded-2xl font-black shadow-lg hover:scale-105 transition">GUARDAR</button>
+              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-5 border-2 rounded-2xl font-black text-slate-500 hover:bg-slate-50">CANCELAR</button>
+              <button onClick={handleAddManualMatch} className="flex-1 p-5 bg-black text-white rounded-2xl font-black shadow-lg">GUARDAR RESULTADO</button>
             </div>
           </div>
         </div>
@@ -625,7 +736,7 @@ export default function AdminFinalMaster() {
 // Icono Trash
 function IconTrash() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
     </svg>
   );
