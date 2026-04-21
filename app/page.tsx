@@ -29,12 +29,12 @@ export default function AdminFinalMaster() {
   const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '', status: 'Inscripciones' });
   const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', groupName: '', type: 'group' });
 
-  // ESTADOS PARA LAS CASILLAS DE RESULTADOS (Como en la App)
   const [sets, setSets] = useState({ s1w: '', s1l: '', s2w: '', s2l: '', s3w: '', s3l: '' });
   const [hasThirdSet, setHasThirdSet] = useState(false);
   const [isWO, setIsWO] = useState(false);
 
   const [search, setSearch] = useState('');
+  const [guestName, setGuestName] = useState(''); // NUEVO: Estado para el jugador invitado
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
   const [scoringRules, setScoringRules] = useState({ win: 3, loss: 0, winWO: 3, lossWO: -2 });
 
@@ -116,6 +116,23 @@ export default function AdminFinalMaster() {
     setView('main'); setActiveTournament(null);
   };
 
+  // =========================================================================
+  // NUEVO: CREAR JUGADOR INVITADO
+  // =========================================================================
+  const handleAddGuest = async () => {
+    if (!guestName.trim()) return alert("Escribe el nombre del invitado");
+    const newGuest = { name: `${guestName.trim()} (Invitado)`, isGuest: true, createdAt: serverTimestamp() };
+    
+    try {
+      const docRef = await addDoc(collection(db, "players"), newGuest);
+      // Lo añadimos instantáneamente a la lista visual de la izquierda
+      setAppPlayers([{ id: docRef.id, name: newGuest.name }, ...appPlayers]);
+      setGuestName('');
+    } catch (e) {
+      alert("Error al crear invitado");
+    }
+  };
+
   const handleGenerateFixture = async () => {
     if (!confirm("Se crearán los partidos y se activará el torneo. ¿Seguro?")) return;
     const matchesRef = collection(db, "tournaments", activeTournament.id, "matches");
@@ -192,15 +209,9 @@ export default function AdminFinalMaster() {
     }).sort((a: any, b: any) => b.Pts !== a.Pts ? b.Pts - a.Pts : b.pctGames - a.pctGames);
   };
 
-  // =========================================================================
-  // LÓGICA DEL NUEVO MODAL (SOLO NÚMEROS Y AUTO-FOCUS)
-  // =========================================================================
   const handleSetChange = (field: string, value: string, nextFieldId: string | null) => {
-    // Filtramos para que solo acepte números (0-9) y máximo 2 caracteres
     const numericValue = value.replace(/\D/g, '').slice(0, 2);
     setSets(prev => ({ ...prev, [field]: numericValue }));
-    
-    // Si escriben 2 dígitos, salta automático a la siguiente casilla
     if (numericValue.length === 2 && nextFieldId) {
       document.getElementById(nextFieldId)?.focus();
     }
@@ -235,7 +246,7 @@ export default function AdminFinalMaster() {
           player1: manualMatch.winnerName, 
           player2: manualMatch.loserName, 
           score: finalScore,
-          status: 'approved', // El admin aprueba automáticamente
+          status: 'approved', 
           createdAt: serverTimestamp() 
         });
       } else {
@@ -246,12 +257,9 @@ export default function AdminFinalMaster() {
           status: 'approved' 
         });
       }
-      
       setIsManualModalOpen(false);
       resetModal();
-    } catch (e) {
-      alert("Error al guardar el resultado.");
-    }
+    } catch (e) { alert("Error al guardar el resultado."); }
   };
 
   const resetModal = () => {
@@ -326,15 +334,26 @@ export default function AdminFinalMaster() {
               {step === 'groups' && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
                   <div className="lg:col-span-4 lg:border-r-2 border-slate-200 lg:pr-10">
-                    <h3 className="font-black text-sm uppercase mb-6 text-slate-400">Base de Jugadores</h3>
+                    
+                    {/* ZONA DE JUGADOR INVITADO (NUEVO) */}
+                    <div className="mb-8 p-6 bg-purple-50 rounded-[20px] border-2 border-purple-100">
+                      <h4 className="text-xs font-black text-purple-700 uppercase mb-3 tracking-widest">¿No tiene la App?</h4>
+                      <p className="text-xs text-purple-600 mb-4 font-bold">Crea un jugador invitado para que puedas añadirlo a los grupos manualmente.</p>
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Ej: Carlos Perez" className="w-full p-3 border-2 border-white rounded-xl text-sm font-bold outline-none focus:border-purple-300 shadow-sm" value={guestName} onChange={e => setGuestName(e.target.value)} />
+                        <button onClick={handleAddGuest} className="bg-purple-600 text-white px-4 rounded-xl font-black text-xl shadow-md hover:bg-purple-700 hover:scale-105 transition">+</button>
+                      </div>
+                    </div>
+
+                    <h3 className="font-black text-sm uppercase mb-4 text-slate-400 tracking-widest">Base de Jugadores</h3>
                     <input type="text" placeholder="Buscar jugador..." className="w-full p-4 border-2 border-slate-200 rounded-2xl mb-6 font-bold outline-none focus:border-black" onChange={e => setSearch(e.target.value)} />
-                    <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                       {appPlayers.filter(p => p.name?.toLowerCase().includes(search.toLowerCase())).map(p => (
                         <div key={p.id} className="p-4 bg-white rounded-2xl border-2 flex justify-between items-center shadow-sm">
                           <span className="font-bold text-sm">{p.name}</span>
                           <div className="flex gap-2">
-                            <button onClick={() => setGroups({...groups, "Grupo A": [...(groups["Grupo A"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white">+A</button>
-                            <button onClick={() => setGroups({...groups, "Grupo B": [...(groups["Grupo B"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white">+B</button>
+                            <button onClick={() => setGroups({...groups, "Grupo A": [...(groups["Grupo A"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white transition">+A</button>
+                            <button onClick={() => setGroups({...groups, "Grupo B": [...(groups["Grupo B"]||[]), p]})} className="bg-slate-50 border-2 px-3 py-1 rounded-xl text-xs font-black hover:bg-black hover:text-white transition">+B</button>
                           </div>
                         </div>
                       ))}
@@ -350,14 +369,14 @@ export default function AdminFinalMaster() {
                             {groups[g].map((p: any) => (
                               <div key={p.id} className="bg-slate-50 p-4 rounded-xl border-2 text-sm font-bold flex justify-between items-center">
                                 {p.name}
-                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 h-8 w-8 rounded-lg flex items-center justify-center">&times;</button>
+                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 h-8 w-8 rounded-lg flex items-center justify-center transition">&times;</button>
                               </div>
                             ))}
                           </div>
                         </div>
                       ))}
                     </div>
-                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Grupos guardados."); }} className="mt-10 w-full bg-black text-white p-5 rounded-2xl font-black shadow-xl hover:bg-slate-800">GUARDAR GRUPOS</button>
+                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Grupos guardados."); }} className="mt-10 w-full bg-black text-white p-5 rounded-2xl font-black shadow-xl hover:bg-slate-800 transition">GUARDAR GRUPOS</button>
                   </div>
                 </div>
               )}
@@ -389,11 +408,22 @@ export default function AdminFinalMaster() {
                           <span className="text-xs font-black bg-slate-100 text-slate-600 px-4 py-2 rounded-full uppercase mr-6">{m.groupName}</span>
                           <span className="font-black text-xl text-slate-800">{m.winnerName} <span className="text-slate-300 mx-3 text-sm">vs</span> {m.loserName}</span>
                         </div>
-                        <div className="flex items-center gap-8">
-                          <span className="font-black text-3xl">{m.score}</span>
-                          {m.status === 'rival_pending' && <span className="text-xs font-bold text-orange-500 bg-orange-50 px-3 py-1 rounded-lg">En Revisión</span>}
-                          {m.status === 'rejected' && <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-red-600 text-white font-bold text-xs px-4 py-2 rounded-xl">Forzar Aprobación (Disputa)</button>}
-                          <button onClick={() => deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id))} className="text-red-500 bg-red-50 p-3 rounded-xl hover:bg-red-500 hover:text-white transition"><IconTrash /></button>
+                        <div className="flex items-center gap-6">
+                          <span className="font-black text-3xl tracking-tighter mr-4">{m.score}</span>
+                          
+                          {/* ESTADOS DE RESOLUCIÓN P2P */}
+                          {m.status === 'rival_pending' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">En Revisión P2P</span>
+                              <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-green-600 text-white font-bold text-[10px] px-3 py-2 rounded-lg hover:bg-green-700 transition">Aprobar</button>
+                            </div>
+                          )}
+                          
+                          {m.status === 'rejected' && (
+                            <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-red-600 text-white font-bold text-[10px] px-4 py-2 rounded-lg hover:bg-red-700 transition">Forzar Aprobación (Disputa)</button>
+                          )}
+
+                          <button onClick={() => deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id))} className="text-red-500 bg-red-50 p-3 rounded-xl hover:bg-red-500 hover:text-white transition ml-2"><IconTrash /></button>
                         </div>
                       </div>
                     ))}
@@ -460,7 +490,7 @@ export default function AdminFinalMaster() {
                   <div className="w-full max-w-lg p-12 bg-white border-4 border-red-100 border-dashed rounded-[40px] text-center shadow-sm">
                     <h3 className="text-3xl font-black mb-4">Zona Restringida</h3>
                     <p className="text-slate-500 font-bold mb-10">Eliminará el torneo, partidos, llaves y configuración de forma permanente.</p>
-                    <button onClick={handleDeleteFullTournament} className="w-full bg-red-600 text-white p-5 rounded-2xl font-black shadow-xl">ELIMINAR TORNEO</button>
+                    <button onClick={handleDeleteFullTournament} className="w-full bg-red-600 text-white p-5 rounded-2xl font-black shadow-xl hover:bg-red-700 transition">ELIMINAR TORNEO</button>
                   </div>
                 </div>
               )}
@@ -483,7 +513,7 @@ export default function AdminFinalMaster() {
               
               {/* SELECTORES DE PARTIDO / JUGADORES */}
               {manualMatch.type === 'bracket' ? (
-                <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none" onChange={e => {
+                <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none focus:border-black" onChange={e => {
                   const match = bracketMatches.find(bm => bm.id === e.target.value);
                   if(match) setManualMatch({...manualMatch, groupName: match.id, winnerName: match.player1, loserName: match.player2});
                 }}>
@@ -492,7 +522,7 @@ export default function AdminFinalMaster() {
                 </select>
               ) : (
                 <>
-                  <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
+                  <select className="w-full p-5 border-2 border-slate-200 rounded-2xl font-bold bg-slate-50 outline-none focus:border-black" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
                      <option value="">Selecciona el Grupo...</option>
                      {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
@@ -501,14 +531,14 @@ export default function AdminFinalMaster() {
                     <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-3xl border-2 border-slate-100">
                       <div>
                         <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase">Ganador</label>
-                        <select className="w-full p-4 border-2 border-green-300 rounded-2xl font-bold bg-white text-green-700 outline-none" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
+                        <select className="w-full p-4 border-2 border-green-300 rounded-2xl font-bold bg-white text-green-700 outline-none focus:border-green-500" value={manualMatch.winnerName} onChange={e => setManualMatch({...manualMatch, winnerName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
                       </div>
                       <div>
                         <label className="block text-[10px] font-black text-slate-400 mb-2 text-center uppercase">Perdedor</label>
-                        <select className="w-full p-4 border-2 border-slate-200 rounded-2xl font-bold bg-white outline-none" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                        <select className="w-full p-4 border-2 border-slate-200 rounded-2xl font-bold bg-white outline-none focus:border-black" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
@@ -521,43 +551,43 @@ export default function AdminFinalMaster() {
               {/* TOGGLE W.O. */}
               <div className="flex items-center justify-between p-4 bg-orange-50 border-2 border-orange-100 rounded-2xl">
                 <span className="font-black text-orange-700">Victoria por W.O.</span>
-                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-6 h-6 accent-orange-600" />
+                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-6 h-6 accent-orange-600 cursor-pointer" />
               </div>
 
               {/* CASILLAS NUMÉRICAS (Ocultas si es W.O.) */}
               {!isWO && (
                 <div className="bg-slate-50 p-6 rounded-3xl border-2 border-slate-100">
-                  <p className="text-[10px] font-black text-slate-400 text-center uppercase mb-4">Score Exacto (Solo Números)</p>
+                  <p className="text-[10px] font-black text-slate-400 text-center uppercase mb-4 tracking-widest">Score Exacto (Solo Números)</p>
                   
                   {/* SET 1 */}
                   <div className="flex items-center justify-center gap-4 mb-4">
                     <span className="font-black text-slate-400 w-12 text-right text-xs">SET 1</span>
-                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                   </div>
                   
                   {/* SET 2 */}
                   <div className="flex items-center justify-center gap-4 mb-6">
                     <span className="font-black text-slate-400 w-12 text-right text-xs">SET 2</span>
-                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                   </div>
 
                   {/* TOGGLE 3ER SET */}
-                  <div className="flex items-center justify-between mb-4 border-t-2 pt-4">
+                  <div className="flex items-center justify-between mb-4 border-t-2 border-slate-200 pt-4">
                     <span className="font-bold text-slate-500 text-sm">Super Tie-break (3er Set)</span>
-                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-5 h-5 accent-green-600" />
+                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-5 h-5 accent-green-600 cursor-pointer" />
                   </div>
 
                   {/* SET 3 */}
                   {hasThirdSet && (
                     <div className="flex items-center justify-center gap-4">
                       <span className="font-black text-slate-400 w-12 text-right text-xs">SET 3</span>
-                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                       <span className="font-black text-slate-300">-</span>
-                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500" />
+                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 transition-colors" />
                     </div>
                   )}
                 </div>
@@ -565,8 +595,8 @@ export default function AdminFinalMaster() {
             </div>
             
             <div className="flex gap-4 mt-8">
-              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-5 border-2 rounded-2xl font-black text-slate-500 hover:bg-slate-50">CANCELAR</button>
-              <button onClick={handleAddManualMatch} className="flex-1 p-5 bg-black text-white rounded-2xl font-black shadow-lg">GUARDAR RESULTADO</button>
+              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-5 border-2 border-slate-200 rounded-2xl font-black text-slate-500 hover:bg-slate-50 transition">CANCELAR</button>
+              <button onClick={handleAddManualMatch} className="flex-1 p-5 bg-black text-white rounded-2xl font-black shadow-lg hover:scale-105 transition">GUARDAR</button>
             </div>
           </div>
         </div>
@@ -592,7 +622,7 @@ export default function AdminFinalMaster() {
   );
 }
 
-// Pequeño componente de icono para el botón de borrar
+// Icono Trash
 function IconTrash() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
