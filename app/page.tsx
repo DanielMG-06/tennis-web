@@ -7,6 +7,7 @@ import {
   collection, onSnapshot, query, orderBy, 
   serverTimestamp, doc, setDoc, getDocs, deleteDoc, getDoc, updateDoc, addDoc 
 } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Importamos Storage
 
 export default function AdminFinalMaster() {
   const [user, setUser] = useState<any>(null);
@@ -26,7 +27,6 @@ export default function AdminFinalMaster() {
   const [reportedMatches, setReportedMatches] = useState<any[]>([]); 
   const [bracketMatches, setBracketMatches] = useState<any[]>([]); 
   
-  // NUEVO: Agregado category (por defecto 3ra) y coverUrl
   const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '', status: 'Inscripciones', coverUrl: '' });
   const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', groupName: '', type: 'group' });
 
@@ -36,12 +36,22 @@ export default function AdminFinalMaster() {
 
   const [search, setSearch] = useState('');
   const [guestName, setGuestName] = useState(''); 
-  
   const [groups, setGroups] = useState<any>({ "Grupo A": [], "Grupo B": [] });
   const [editingGroup, setEditingGroup] = useState<string | null>(null);
-
   const [scoringRules, setScoringRules] = useState({ win: 3, loss: 0, winWO: 3, lossWO: -2, advancingPerGroup: 2 });
 
+  // ==========================================
+  // ESTADOS PARA EL CROPPER DE IMAGEN (NUEVO)
+  // ==========================================
+  const [selectedImageFile, setSelectedImageFile] = useState<string | null>(null);
+  const [cropConfig, setCropConfig] = useState({ scale: 1, x: 0, y: 0 });
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const dragRef = useRef({ startX: 0, startY: 0, isDragging: false });
+
+  // ==========================================
+  // ESTADOS PARA ARRASTRAR EL ÁRBOL DE LLAVES
+  // ==========================================
   const sliderRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
@@ -84,15 +94,11 @@ export default function AdminFinalMaster() {
     
     const loadConfig = async () => {
       const gDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"));
-      if (gDoc.exists() && gDoc.data().structure) {
-        setGroups(gDoc.data().structure);
-      } else {
-        setGroups({ "Grupo A": [], "Grupo B": [] });
-      }
+      if (gDoc.exists() && gDoc.data().structure) setGroups(gDoc.data().structure);
+      else setGroups({ "Grupo A": [], "Grupo B": [] });
+      
       const rDoc = await getDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"));
-      if (rDoc.exists() && rDoc.data().win !== undefined) {
-        setScoringRules({ advancingPerGroup: 2, ...rDoc.data() } as any);
-      }
+      if (rDoc.exists() && rDoc.data().win !== undefined) setScoringRules({ advancingPerGroup: 2, ...rDoc.data() } as any);
     }
     loadConfig();
 
@@ -114,22 +120,72 @@ export default function AdminFinalMaster() {
   };
 
   // =========================================================================
-  // CREACIÓN DE TORNEO CON LOGICA PRIVADA Y PORTADA
+  // LÓGICA DE IMÁGENES Y RECORTES (NUEVO)
   // =========================================================================
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setSelectedImageFile(url);
+      setCropConfig({ scale: 1, x: 0, y: 0 }); // Resetear crop
+    }
+  };
+
+  const handleCropAndUpload = async () => {
+    if (!imageRef.current) return;
+    setIsUploadingImage(true);
+
+    try {
+      // 1. Crear un lienzo del tamaño exacto de la App (proporción vertical 3:4 o similar, usamos 600x800 para buena calidad)
+      const canvas = document.createElement('canvas');
+      canvas.width = 600;
+      canvas.height = 800;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) throw new Error("Canvas no soportado");
+
+      // 2. Calcular la escala relativa (Nuestra ventana de preview mide 240x320, el ratio es 600/240 = 2.5)
+      const ratio = 600 / 240;
+      ctx.scale(ratio, ratio);
+      ctx.translate(cropConfig.x, cropConfig.y);
+      ctx.scale(cropConfig.scale, cropConfig.scale);
+      
+      // 3. Dibujar la imagen tal cual la acomodó el usuario
+      ctx.drawImage(imageRef.current, 0, 0);
+
+      // 4. Convertir a archivo y subir a Firebase
+      canvas.toBlob(async (blob) => {
+        if (!blob) throw new Error("Error al procesar imagen");
+        const storage = getStorage();
+        const fileRef = ref(storage, `tournaments_covers/cover_${Date.now()}.jpg`);
+        await uploadBytes(fileRef, blob);
+        const downloadUrl = await getDownloadURL(fileRef);
+        
+        // 5. Guardar URL en el estado del nuevo torneo y cerrar el cropper
+        setNewT({ ...newT, coverUrl: downloadUrl });
+        setSelectedImageFile(null);
+        setIsUploadingImage(false);
+      }, 'image/jpeg', 0.85);
+
+    } catch (e) {
+      alert("Error al procesar y subir la imagen.");
+      setIsUploadingImage(false);
+    }
+  };
+
   const handleCreateTournament = async () => {
     if (!newT.name || !newT.price) return alert("Faltan datos obligatorios");
     
     const finalCoverUrl = newT.coverUrl.trim() !== '' 
       ? newT.coverUrl 
-      : 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800&auto=format&fit=crop'; // Arcilla por defecto
+      : 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800&auto=format&fit=crop'; 
 
-    // Lógica para detectar si es un torneo privado de tu negocio
     const isPrivateTournament = newT.category === 'RCB' || newT.category === 'CREMA';
 
     await addDoc(collection(db, "tournaments"), { 
       ...newT, 
       coverUrl: finalCoverUrl,
-      isPrivate: isPrivateTournament, // Bandera de seguridad para la App
+      isPrivate: isPrivateTournament,
       participantsIds: [], 
       createdAt: serverTimestamp() 
     });
@@ -150,7 +206,7 @@ export default function AdminFinalMaster() {
   };
 
   const handleFinishTournament = async () => {
-    if (!confirm("¿Seguro que deseas finalizar el torneo? Se cerrarán las ediciones y pasará al Historial de la App.")) return;
+    if (!confirm("¿Seguro que deseas finalizar el torneo? Pasará al Historial de la App.")) return;
     await updateDoc(doc(db, "tournaments", activeTournament.id), { status: 'Finalizado' });
     setActiveTournament({...activeTournament, status: 'Finalizado'});
   };
@@ -248,14 +304,13 @@ export default function AdminFinalMaster() {
       });
     }
 
-    if (qualifiedPlayers.length % 2 !== 0) alert(`Aviso: Un jugador clasificó pero no pudo ser emparejado por ser un número impar de clasificados.`);
+    if (qualifiedPlayers.length % 2 !== 0) alert(`Aviso: Un jugador clasificó pero no pudo ser emparejado por ser un número impar.`);
     await updateDoc(doc(db, "tournaments", activeTournament.id), { status: 'Fase Final' });
     setActiveTournament({...activeTournament, status: 'Fase Final'});
   };
 
   const handleAdvanceToNextBracketRound = async (latestMatches: any[], maxTier: number) => {
     if (!confirm("¿Generar la siguiente fase con los ganadores actuales?")) return;
-    
     const bracketRef = collection(db, "tournaments", activeTournament.id, "bracket_matches");
     const numMatches = Math.floor(latestMatches.length / 2);
     
@@ -282,7 +337,6 @@ export default function AdminFinalMaster() {
     players.forEach((p: any) => { stats[p.name] = { name: p.name, PJ: 0, PG: 0, PP: 0, Pts: 0, GW: 0, GL: 0 }; });
 
     const validMatches = reportedMatches.filter(m => m.groupName === groupName);
-    
     validMatches.forEach(m => {
       let isPastDeadline = false;
       try { if (m.endDate && new Date() > new Date(m.endDate)) isPastDeadline = true; } catch(e){}
@@ -320,9 +374,7 @@ export default function AdminFinalMaster() {
   const handleSetChange = (field: string, value: string, nextFieldId: string | null) => {
     const numericValue = value.replace(/\D/g, '').slice(0, 2);
     setSets(prev => ({ ...prev, [field]: numericValue }));
-    if (numericValue.length === 2 && nextFieldId) {
-      document.getElementById(nextFieldId)?.focus();
-    }
+    if (numericValue.length === 2 && nextFieldId) { document.getElementById(nextFieldId)?.focus(); }
   };
 
   const handleAddManualMatch = async () => {
@@ -357,6 +409,7 @@ export default function AdminFinalMaster() {
     setHasThirdSet(false); setIsWO(false);
   };
 
+  // Variables para la lógica del Árbol de Llaves Drag & Pan
   const maxTier = bracketMatches.length > 0 ? Math.max(...bracketMatches.map(m => m.tier || 1)) : 1;
   const latestBracketMatches = bracketMatches.filter(m => (m.tier || 1) === maxTier);
   const canAdvanceBracket = latestBracketMatches.length > 1 && latestBracketMatches.every(m => m.status === 'approved');
@@ -380,18 +433,19 @@ export default function AdminFinalMaster() {
     sliderRef.current.scrollTop = scrollTop - (y - startY) * 1.5;
   };
 
+
   // =========================================================================
-  // UI: PALETA VERDE (FLAT DESIGN DE ALTO NIVEL)
+  // RENDER UI - TEMA VERDE EXCLUSIVO
   // =========================================================================
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-green-500 uppercase tracking-widest">Cargando...</p></div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-green-600 uppercase tracking-widest">Cargando...</p></div>;
 
   if (!user || !isAdmin) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <form onSubmit={handleLogin} className="bg-white p-10 shadow-sm border border-slate-200 w-full max-w-sm rounded-[30px]">
-        <h1 className="text-xl font-black text-center mb-8 text-green-900 tracking-tight">Acceso Master</h1>
-        <input type="email" required placeholder="Correo" className="w-full p-4 mb-4 border border-slate-200 rounded-xl font-bold outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition" onChange={e => setEmail(e.target.value)} />
-        <input type="password" required placeholder="Contraseña" className="w-full p-4 mb-8 border border-slate-200 rounded-xl font-bold outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition" onChange={e => setPassword(e.target.value)} />
-        <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-bold tracking-wide hover:bg-green-700 transition">ENTRAR AL SISTEMA</button>
+      <form onSubmit={handleLogin} className="bg-white p-10 shadow-lg border border-green-100 w-full max-w-sm rounded-[30px]">
+        <h1 className="text-2xl font-black text-center mb-8 text-green-900 tracking-tight">Acceso Master</h1>
+        <input type="email" required placeholder="Correo" className="w-full p-4 mb-4 border-2 border-slate-100 rounded-xl font-bold outline-none focus:border-green-500 transition" onChange={e => setEmail(e.target.value)} />
+        <input type="password" required placeholder="Contraseña" className="w-full p-4 mb-8 border-2 border-slate-100 rounded-xl font-bold outline-none focus:border-green-500 transition" onChange={e => setPassword(e.target.value)} />
+        <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-black tracking-widest uppercase hover:bg-green-700 transition">ENTRAR</button>
       </form>
     </div>
   );
@@ -401,22 +455,22 @@ export default function AdminFinalMaster() {
       
       {view === 'main' ? (
         <div className="p-10 max-w-7xl mx-auto">
-          <div className="flex justify-between items-center mb-10 border-b border-slate-200 pb-4">
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">Panel de Torneos</h1>
-            <button onClick={() => setIsModalOpen(true)} className="bg-green-600 text-white px-6 py-3 rounded-xl font-bold text-sm tracking-wide hover:bg-green-700 transition shadow-sm border border-green-700">+ NUEVO TORNEO</button>
+          <div className="flex justify-between items-center mb-10 border-b-2 border-green-100 pb-4">
+            <h1 className="text-3xl font-black text-green-900 tracking-tight">Panel de Torneos</h1>
+            <button onClick={() => setIsModalOpen(true)} className="bg-green-600 text-white px-6 py-3 rounded-xl font-black text-sm tracking-widest uppercase hover:bg-green-700 transition shadow-md border-b-4 border-green-800">+ NUEVO TORNEO</button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
             {tournaments.map(t => (
-              <div key={t.id} className="bg-white rounded-2xl border border-slate-200 hover:border-green-400 hover:shadow-md transition overflow-hidden flex flex-col">
-                <div className="h-32 bg-slate-200 relative">
-                  <img src={t.coverUrl || 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800'} alt="Cover" className="w-full h-full object-cover" />
-                  <div className="absolute top-3 right-3 bg-black/80 backdrop-blur text-white text-[9px] font-black px-2 py-1 rounded uppercase tracking-wider">{t.status}</div>
+              <div key={t.id} className="bg-white rounded-[20px] border-2 border-slate-100 hover:border-green-500 hover:shadow-xl transition-all overflow-hidden flex flex-col group">
+                <div className="h-40 bg-slate-200 relative overflow-hidden">
+                  <img src={t.coverUrl || 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800'} alt="Cover" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                  <div className="absolute top-3 right-3 bg-black/80 backdrop-blur text-white text-[10px] font-black px-3 py-1.5 rounded-md uppercase tracking-widest">{t.status}</div>
                 </div>
-                <div className="p-5 flex flex-col flex-grow">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{t.category}</span>
-                  <h2 className="text-lg font-black mb-4 text-slate-800 leading-tight">{t.name}</h2>
+                <div className="p-6 flex flex-col flex-grow">
+                  <span className="text-[10px] font-black text-green-600 uppercase tracking-widest mb-2">{t.category}</span>
+                  <h2 className="text-xl font-black mb-6 text-slate-800 leading-tight">{t.name}</h2>
                   <div className="mt-auto">
-                    <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full bg-slate-50 text-green-700 py-3 rounded-xl font-bold text-xs uppercase tracking-widest border border-slate-200 hover:bg-green-50 hover:border-green-200 transition">Gestionar</button>
+                    <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full bg-green-50 text-green-700 py-3.5 rounded-xl font-black text-xs uppercase tracking-widest border border-green-100 hover:bg-green-600 hover:text-white transition">Gestionar</button>
                   </div>
                 </div>
               </div>
@@ -425,51 +479,51 @@ export default function AdminFinalMaster() {
         </div>
       ) : (
         <div className="p-8 max-w-7xl mx-auto">
-          <div className="flex items-center gap-4 mb-8 border-b border-slate-200 pb-4">
-            <button onClick={() => setView('main')} className="text-slate-400 hover:text-green-600 font-black text-xl px-2 transition">&larr;</button>
-            <h2 className="text-2xl font-black text-slate-900 tracking-tight">{activeTournament.name}</h2>
-            <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest ml-2 ${activeTournament.status === 'Inscripciones' ? 'bg-blue-100 text-blue-700' : activeTournament.status === 'Activo' ? 'bg-emerald-100 text-emerald-700' : activeTournament.status === 'Finalizado' ? 'bg-slate-200 text-slate-600' : 'bg-purple-100 text-purple-700'}`}>{activeTournament.status}</span>
+          <div className="flex items-center gap-4 mb-8 border-b-2 border-green-100 pb-4">
+            <button onClick={() => setView('main')} className="text-slate-400 hover:text-green-600 font-black text-2xl px-2 transition">&larr;</button>
+            <h2 className="text-3xl font-black text-green-900 tracking-tight">{activeTournament.name}</h2>
+            <span className={`text-[10px] font-black px-3 py-1.5 rounded-md uppercase tracking-widest ml-4 ${activeTournament.status === 'Inscripciones' ? 'bg-blue-100 text-blue-700' : activeTournament.status === 'Activo' ? 'bg-green-100 text-green-700' : activeTournament.status === 'Finalizado' ? 'bg-slate-200 text-slate-600' : 'bg-purple-100 text-purple-700'}`}>{activeTournament.status}</span>
             <div className="ml-auto flex gap-3">
-              {activeTournament.status === 'Inscripciones' && <button onClick={handleGenerateFixture} className="bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-blue-600 transition shadow-sm">Generar Fixture &rarr;</button>}
-              {activeTournament.status === 'Activo' && <button onClick={handleGenerateBrackets} className="bg-purple-500 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-purple-600 transition shadow-sm">Crear Llaves &rarr;</button>}
-              {(activeTournament.status === 'Fase Final' || activeTournament.status === 'Activo') && <button onClick={handleFinishTournament} className="bg-slate-800 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-black transition shadow-sm">🏁 Finalizar Torneo</button>}
+              {activeTournament.status === 'Inscripciones' && <button onClick={handleGenerateFixture} className="bg-blue-500 text-white px-5 py-2.5 rounded-xl font-black text-xs tracking-widest uppercase hover:bg-blue-600 transition shadow-sm">Generar Fixture &rarr;</button>}
+              {activeTournament.status === 'Activo' && <button onClick={handleGenerateBrackets} className="bg-purple-500 text-white px-5 py-2.5 rounded-xl font-black text-xs tracking-widest uppercase hover:bg-purple-600 transition shadow-sm">Crear Llaves &rarr;</button>}
+              {(activeTournament.status === 'Fase Final' || activeTournament.status === 'Activo') && <button onClick={handleFinishTournament} className="bg-slate-800 text-white px-5 py-2.5 rounded-xl font-black text-xs tracking-widest uppercase hover:bg-black transition shadow-sm">🏁 Finalizar Torneo</button>}
             </div>
           </div>
           
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-            <div className="flex bg-slate-50 border-b border-slate-200 overflow-x-auto">
+          <div className="bg-white rounded-[30px] border border-slate-100 overflow-hidden shadow-xl">
+            <div className="flex bg-slate-50 border-b border-slate-200 overflow-x-auto p-2 gap-2">
                {['groups', 'standings', 'history', 'brackets', 'rules', 'settings'].map(s => (
-                 <button key={s} onClick={() => setStep(s)} className={`px-8 py-4 text-[11px] font-black uppercase tracking-widest transition ${step === s ? 'bg-white border-t-2 border-green-600 text-green-700' : 'text-slate-500 hover:text-green-700 hover:bg-white'}`}>
+                 <button key={s} onClick={() => setStep(s)} className={`px-6 py-4 rounded-xl text-[11px] font-black uppercase tracking-widest transition ${step === s ? 'bg-white shadow-sm text-green-700' : 'text-slate-500 hover:text-green-700 hover:bg-white'}`}>
                     {s === 'groups' ? 'Grupos' : s === 'standings' ? 'Posiciones' : s === 'history' ? 'Resultados' : s === 'brackets' ? 'Llaves' : s === 'rules' ? 'Reglas' : 'Ajustes'}
                  </button>
                ))}
             </div>
 
-            <div className="p-8 min-h-[600px]">
+            <div className="p-8 min-h-[600px] bg-slate-50/50">
               
               {/* === GRUPOS === */}
               {step === 'groups' && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
                   <div className="lg:col-span-4 lg:border-r border-slate-200 lg:pr-8">
-                    <div className="mb-8 p-5 bg-green-50 border border-green-100 rounded-xl">
-                      <h4 className="text-[10px] font-black text-green-700 uppercase mb-2 tracking-widest">Crear Invitado</h4>
-                      <div className="flex gap-2">
-                        <input type="text" placeholder="Ej: Carlos Perez" className="w-full p-2 rounded-lg border border-green-200 text-sm font-bold outline-none focus:border-green-400 focus:ring-1 focus:ring-green-400" value={guestName} onChange={e => setGuestName(e.target.value)} />
-                        <button onClick={handleAddGuest} className="bg-green-600 text-white px-4 rounded-lg font-bold hover:bg-green-700 transition">+</button>
+                    <div className="mb-8 p-6 bg-green-50 border border-green-100 rounded-2xl">
+                      <h4 className="text-[11px] font-black text-green-700 uppercase mb-3 tracking-widest">Crear Invitado</h4>
+                      <div className="flex gap-3">
+                        <input type="text" placeholder="Ej: Carlos Perez" className="w-full p-3 rounded-xl border border-white shadow-sm text-sm font-bold outline-none focus:border-green-400" value={guestName} onChange={e => setGuestName(e.target.value)} />
+                        <button onClick={handleAddGuest} className="bg-green-600 text-white px-5 rounded-xl font-black text-lg hover:bg-green-700 transition shadow-sm">+</button>
                       </div>
                     </div>
-                    <h3 className="font-black text-[10px] uppercase mb-4 text-slate-400 tracking-widest">Base de Jugadores</h3>
-                    <input type="text" placeholder="Buscar jugador..." className="w-full p-3 rounded-xl border border-slate-200 mb-4 font-bold outline-none focus:border-green-400 text-sm" onChange={e => setSearch(e.target.value)} />
-                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
+                    <h3 className="font-black text-[11px] uppercase mb-4 text-slate-400 tracking-widest">Base de Jugadores</h3>
+                    <input type="text" placeholder="Buscar jugador..." className="w-full p-4 rounded-2xl border-2 border-white shadow-sm mb-6 font-bold outline-none focus:border-green-400 text-sm" onChange={e => setSearch(e.target.value)} />
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                       {appPlayers.filter(p => p.name?.toLowerCase().includes(search.toLowerCase())).map(p => (
-                        <div key={p.id} className="p-3 border border-slate-100 rounded-xl bg-white flex flex-col hover:border-slate-300 transition">
+                        <div key={p.id} className="p-4 border border-slate-100 rounded-2xl bg-white flex flex-col hover:border-green-200 transition shadow-sm">
                           <div className="flex justify-between items-center w-full">
-                            <span className="font-bold text-xs text-slate-700">{p.name}</span>
-                            {p.isGuest && <button onClick={() => handleDeleteGuest(p.id, p.name)} className="text-slate-300 hover:text-red-500 text-xs font-bold transition">Borrar</button>}
+                            <span className="font-bold text-sm text-slate-700">{p.name}</span>
+                            {p.isGuest && <button onClick={() => handleDeleteGuest(p.id, p.name)} className="text-slate-300 hover:text-red-500 text-xs font-black transition uppercase">Borrar</button>}
                           </div>
-                          <div className="flex flex-wrap gap-2 mt-3 pt-2">
+                          <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-50">
                             {Object.keys(groups).map(gName => (
-                              <button key={gName} onClick={() => setGroups({...groups, [gName]: [...(groups[gName]||[]), p]})} className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-green-50 hover:text-green-700 hover:border-green-300 uppercase transition">
+                              <button key={gName} onClick={() => setGroups({...groups, [gName]: [...(groups[gName]||[]), p]})} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[10px] font-black text-slate-500 hover:bg-green-600 hover:text-white hover:border-green-600 uppercase transition tracking-widest">
                                 + {gName.substring(0, 8)}
                               </button>
                             ))}
@@ -480,35 +534,35 @@ export default function AdminFinalMaster() {
                   </div>
                   
                   <div className="lg:col-span-8">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       {Object.keys(groups).map(g => (
-                        <div key={g} className="bg-white p-6 rounded-xl border border-slate-200 group relative">
-                          <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                        <div key={g} className="bg-white p-8 rounded-3xl border border-slate-200 group relative shadow-sm">
+                          <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-3">
                             {editingGroup === g ? (
-                              <input autoFocus defaultValue={g} onBlur={(e) => handleRenameGroup(g, e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(g, e.currentTarget.value)} className="font-black uppercase text-lg border-b-2 border-green-500 outline-none w-3/4 text-green-700" />
+                              <input autoFocus defaultValue={g} onBlur={(e) => handleRenameGroup(g, e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(g, e.currentTarget.value)} className="font-black uppercase text-xl border-b-2 border-green-500 outline-none w-3/4 text-green-700" />
                             ) : (
-                              <h4 className="font-black uppercase text-lg text-slate-800 cursor-pointer hover:text-green-600 transition" onClick={() => setEditingGroup(g)}>{g}</h4>
+                              <h4 className="font-black uppercase text-xl text-slate-800 cursor-pointer hover:text-green-600 transition" onClick={() => setEditingGroup(g)}>{g}</h4>
                             )}
-                            <button onClick={() => handleDeleteGroup(g)} className="text-slate-300 hover:text-red-500 text-xs font-bold uppercase transition">X</button>
+                            <button onClick={() => handleDeleteGroup(g)} className="text-slate-300 hover:text-red-500 text-xs font-black uppercase transition">X</button>
                           </div>
-                          <div className="space-y-2">
-                            {groups[g].length === 0 && <p className="text-slate-400 font-bold text-xs">Vacío</p>}
+                          <div className="space-y-3">
+                            {groups[g].length === 0 && <p className="text-slate-400 font-bold text-sm">Grupo vacío</p>}
                             {groups[g].map((p: any) => (
-                              <div key={p.id} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs font-bold flex justify-between items-center text-slate-600">
+                              <div key={p.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm font-bold flex justify-between items-center text-slate-700">
                                 {p.name}
-                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 font-bold px-2 transition">X</button>
+                                <button onClick={() => setGroups({...groups, [g]: groups[g].filter((x:any)=>x.id!==p.id)})} className="text-slate-400 hover:text-red-500 font-black px-2 transition">X</button>
                               </div>
                             ))}
                           </div>
                         </div>
                       ))}
                       
-                      <button onClick={handleAddGroup} className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center p-6 hover:bg-green-50 hover:border-green-300 transition group min-h-[150px]">
-                        <span className="text-2xl font-black text-slate-300 group-hover:text-green-500 mb-2 transition">+</span>
-                        <span className="font-black text-slate-400 group-hover:text-green-600 uppercase tracking-widest text-[10px] transition">Añadir Grupo</span>
+                      <button onClick={handleAddGroup} className="bg-transparent border-2 border-dashed border-slate-300 rounded-3xl flex flex-col items-center justify-center p-8 hover:bg-green-50 hover:border-green-400 transition group min-h-[200px]">
+                        <span className="text-4xl font-black text-slate-300 group-hover:text-green-500 mb-3 transition">+</span>
+                        <span className="font-black text-slate-400 group-hover:text-green-600 uppercase tracking-widest text-xs transition">Añadir Grupo</span>
                       </button>
                     </div>
-                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Guardado."); }} className="mt-8 w-full bg-green-600 text-white rounded-xl p-4 font-bold text-[11px] tracking-widest uppercase hover:bg-green-700 transition shadow-sm">Guardar Estructura</button>
+                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Guardado."); }} className="mt-10 w-full bg-green-600 text-white rounded-2xl p-5 font-black text-xs tracking-widest uppercase hover:bg-green-700 transition shadow-lg border-b-4 border-green-800">Guardar Estructura</button>
                   </div>
                 </div>
               )}
@@ -516,52 +570,52 @@ export default function AdminFinalMaster() {
               {/* === REGLAS === */}
               {step === 'rules' && (
                 <div className="max-w-4xl mx-auto">
-                  <div className="mb-10 pb-6 border-b border-slate-200">
-                    <h3 className="text-sm font-black mb-3 uppercase text-slate-800 tracking-wide">Lógica de Clasificación</h3>
-                    <div className="bg-white p-5 rounded-xl border border-slate-200 flex justify-between items-center">
-                      <span className="font-bold text-[11px] uppercase tracking-widest text-slate-500">Jugadores que avanzan a Llaves (Por Grupo):</span>
-                      <input type="number" min="1" value={scoringRules.advancingPerGroup} onChange={e => setScoringRules({...scoringRules, advancingPerGroup: Number(e.target.value)})} className="w-20 p-2 text-lg font-black border border-slate-300 rounded-lg text-center outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-green-700" />
+                  <div className="mb-12 pb-8 border-b border-slate-200">
+                    <h3 className="text-sm font-black mb-4 uppercase text-slate-800 tracking-wide">Lógica de Clasificación</h3>
+                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
+                      <span className="font-black text-[11px] uppercase tracking-widest text-slate-500">Jugadores que avanzan a Llaves (Por Grupo):</span>
+                      <input type="number" min="1" value={scoringRules.advancingPerGroup} onChange={e => setScoringRules({...scoringRules, advancingPerGroup: Number(e.target.value)})} className="w-24 p-3 text-xl font-black border-2 border-slate-100 rounded-xl text-center outline-none focus:border-green-500 text-green-700 bg-slate-50" />
                     </div>
                   </div>
 
-                  <h3 className="text-sm font-black mb-4 uppercase text-slate-800 tracking-wide">Puntuación</h3>
-                  <div className="grid grid-cols-2 gap-4 mb-8">
-                    <div className="bg-white p-5 rounded-xl border border-slate-200"><label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">Puntos Victoria</label><input type="number" value={scoringRules.win} onChange={e => setScoringRules({...scoringRules, win: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-slate-200 rounded-lg outline-none focus:border-emerald-500 text-emerald-600 transition" /></div>
-                    <div className="bg-white p-5 rounded-xl border border-slate-200"><label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">Puntos Derrota</label><input type="number" value={scoringRules.loss} onChange={e => setScoringRules({...scoringRules, loss: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-slate-200 rounded-lg outline-none focus:border-slate-500 text-slate-600 transition" /></div>
-                    <div className="bg-emerald-50 p-5 rounded-xl border border-emerald-100"><label className="block text-[10px] font-black text-emerald-600 mb-2 uppercase tracking-widest">Victoria W.O.</label><input type="number" value={scoringRules.winWO} onChange={e => setScoringRules({...scoringRules, winWO: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-emerald-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-emerald-700 transition" /></div>
-                    <div className="bg-rose-50 p-5 rounded-xl border border-rose-100"><label className="block text-[10px] font-black text-rose-600 mb-2 uppercase tracking-widest">Derrota W.O.</label><input type="number" value={scoringRules.lossWO} onChange={e => setScoringRules({...scoringRules, lossWO: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-rose-200 rounded-lg outline-none focus:border-rose-500 bg-white text-rose-600 transition" /></div>
+                  <h3 className="text-sm font-black mb-6 uppercase text-slate-800 tracking-wide">Puntuación</h3>
+                  <div className="grid grid-cols-2 gap-6 mb-10">
+                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><label className="block text-[10px] font-black text-slate-400 mb-3 uppercase tracking-widest">Puntos Victoria</label><input type="number" value={scoringRules.win} onChange={e => setScoringRules({...scoringRules, win: Number(e.target.value)})} className="w-full p-4 text-2xl font-black border-2 border-slate-50 rounded-xl outline-none focus:border-green-500 text-green-600 transition bg-slate-50" /></div>
+                    <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><label className="block text-[10px] font-black text-slate-400 mb-3 uppercase tracking-widest">Puntos Derrota</label><input type="number" value={scoringRules.loss} onChange={e => setScoringRules({...scoringRules, loss: Number(e.target.value)})} className="w-full p-4 text-2xl font-black border-2 border-slate-50 rounded-xl outline-none focus:border-slate-500 text-slate-600 transition bg-slate-50" /></div>
+                    <div className="bg-green-50 p-6 rounded-2xl border border-green-100"><label className="block text-[10px] font-black text-green-700 mb-3 uppercase tracking-widest">Victoria W.O.</label><input type="number" value={scoringRules.winWO} onChange={e => setScoringRules({...scoringRules, winWO: Number(e.target.value)})} className="w-full p-4 text-2xl font-black border-2 border-green-200 rounded-xl outline-none focus:border-green-500 bg-white text-green-800 transition" /></div>
+                    <div className="bg-red-50 p-6 rounded-2xl border border-red-100"><label className="block text-[10px] font-black text-red-600 mb-3 uppercase tracking-widest">Derrota W.O.</label><input type="number" value={scoringRules.lossWO} onChange={e => setScoringRules({...scoringRules, lossWO: Number(e.target.value)})} className="w-full p-4 text-2xl font-black border-2 border-red-200 rounded-xl outline-none focus:border-red-500 bg-white text-red-600 transition" /></div>
                   </div>
-                  <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true }); alert("Reglas guardadas."); }} className="w-full bg-green-600 text-white p-4 rounded-xl font-bold text-[11px] tracking-widest uppercase hover:bg-green-700 transition shadow-sm">Guardar y Recalcular Tablas</button>
+                  <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true }); alert("Reglas guardadas."); }} className="w-full bg-green-600 text-white p-5 rounded-2xl font-black text-[11px] tracking-widest uppercase hover:bg-green-700 transition shadow-lg border-b-4 border-green-800">Guardar y Recalcular Tablas</button>
                 </div>
               )}
 
               {/* === RESULTADOS === */}
               {step === 'history' && (
                 <div className="max-w-5xl mx-auto">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="font-black uppercase text-slate-400 text-[10px] tracking-widest">Monitor de Fase de Grupos</h3>
-                    <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'group'}); setIsManualModalOpen(true); }} className="bg-green-50 text-green-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-100 border border-green-200 transition">+ Registrar Score</button>
+                  <div className="flex justify-between items-center mb-8">
+                    <h3 className="font-black uppercase text-slate-400 text-xs tracking-widest">Monitor de Grupos</h3>
+                    <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'group'}); setIsManualModalOpen(true); }} className="bg-green-50 text-green-700 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-100 border border-green-200 transition">+ Registrar Score</button>
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {reportedMatches.filter(m => m.status === 'approved' || m.status === 'rival_pending' || m.status === 'rejected').map(m => (
-                      <div key={m.id} className={`p-4 rounded-xl bg-white border flex justify-between items-center transition ${m.status === 'rejected' ? 'border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.2)]' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <div key={m.id} className={`p-5 rounded-2xl bg-white border-2 flex justify-between items-center transition shadow-sm ${m.status === 'rejected' ? 'border-red-300' : 'border-slate-100'}`}>
                         <div className="flex items-center">
-                          <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2 py-1 rounded uppercase mr-4 tracking-wider">{m.groupName}</span>
-                          <span className="font-bold text-sm text-slate-800">{m.winnerName} <span className="text-slate-300 mx-2 text-xs font-normal">vs</span> {m.loserName}</span>
+                          <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-3 py-1.5 rounded uppercase mr-6 tracking-widest">{m.groupName}</span>
+                          <span className="font-bold text-base text-slate-800">{m.winnerName} <span className="text-slate-300 mx-3 text-sm font-normal">vs</span> {m.loserName}</span>
                         </div>
-                        <div className="flex items-center gap-4">
-                          <span className="font-black text-lg text-slate-700 tracking-tight">{m.score}</span>
+                        <div className="flex items-center gap-5">
+                          <span className="font-black text-2xl text-slate-700 tracking-tight">{m.score}</span>
                           
                           {m.status === 'rival_pending' && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-[9px] font-black text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-100 uppercase tracking-wider">En Revisión</span>
-                              <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] px-3 py-1 rounded hover:bg-emerald-100 transition uppercase">Aprobar</button>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[9px] font-black text-orange-600 bg-orange-50 px-3 py-1.5 rounded border border-orange-100 uppercase tracking-widest">En Revisión</span>
+                              <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-green-50 text-green-700 border border-green-200 font-black text-[10px] px-4 py-1.5 rounded-lg hover:bg-green-100 transition uppercase tracking-widest">Aprobar</button>
                             </div>
                           )}
                           
-                          {m.status === 'rejected' && <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-rose-500 text-white rounded font-bold text-[10px] px-3 py-1 uppercase shadow-sm">Forzar Aprobación</button>}
+                          {m.status === 'rejected' && <button onClick={() => updateDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id), {status: 'approved'})} className="bg-red-500 text-white rounded-lg font-black text-[10px] px-4 py-1.5 uppercase shadow-sm tracking-widest">Forzar Aprobación</button>}
 
-                          <button onClick={() => deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id))} className="text-slate-300 font-bold text-xs uppercase hover:text-rose-500 ml-2 transition">X</button>
+                          <button onClick={() => deleteDoc(doc(db, "tournaments", activeTournament.id, "matches", m.id))} className="text-slate-300 font-black text-lg hover:text-red-500 ml-3 transition">X</button>
                         </div>
                       </div>
                     ))}
@@ -575,22 +629,22 @@ export default function AdminFinalMaster() {
                   {Object.keys(groups).map((gName) => {
                       const standings = calculateStandings(gName); 
                       return (
-                          <div key={gName} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                              <div className="bg-slate-50 p-4 border-b border-slate-200"><h4 className="font-black text-green-900 text-sm uppercase tracking-widest">{gName}</h4></div>
+                          <div key={gName} className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-md">
+                              <div className="bg-slate-50 p-5 border-b border-slate-100"><h4 className="font-black text-green-900 text-sm uppercase tracking-widest">{gName}</h4></div>
                               <table className="w-full text-left">
-                                  <thead className="bg-white text-slate-400 text-[10px] font-black uppercase border-b border-slate-100">
-                                      <tr><th className="p-4">Jugador</th><th className="p-4 text-center">PJ</th><th className="p-4 text-center">PG</th><th className="p-4 text-center text-green-500">PTS</th></tr>
+                                  <thead className="bg-white text-slate-400 text-[10px] font-black uppercase border-b-2 border-slate-50">
+                                      <tr><th className="p-5">Jugador</th><th className="p-5 text-center">PJ</th><th className="p-5 text-center">PG</th><th className="p-5 text-center text-green-600">PTS</th></tr>
                                   </thead>
                                   <tbody>
                                       {standings.map((s: any, i: number) => (
-                                          <tr key={s.name} className={`border-b border-slate-50 ${i < scoringRules.advancingPerGroup ? 'bg-emerald-50/30' : ''}`}>
-                                            <td className="p-4 font-bold text-sm text-slate-700">
-                                              <span className={`mr-3 font-black ${i < scoringRules.advancingPerGroup ? 'text-emerald-500' : 'text-slate-300'}`}>{i+1}</span>
+                                          <tr key={s.name} className={`border-b border-slate-50 ${i < scoringRules.advancingPerGroup ? 'bg-green-50/50' : ''}`}>
+                                            <td className="p-5 font-bold text-sm text-slate-700">
+                                              <span className={`mr-4 font-black ${i < scoringRules.advancingPerGroup ? 'text-green-600' : 'text-slate-300'}`}>{i+1}</span>
                                               {s.name}
                                             </td>
-                                            <td className="p-4 text-center font-bold text-slate-400 text-sm">{s.PJ}</td>
-                                            <td className="p-4 text-center font-bold text-slate-400 text-sm">{s.PG}</td>
-                                            <td className="p-4 text-center font-black text-lg text-green-600">{s.Pts}</td>
+                                            <td className="p-5 text-center font-bold text-slate-400 text-sm">{s.PJ}</td>
+                                            <td className="p-5 text-center font-bold text-slate-400 text-sm">{s.PG}</td>
+                                            <td className="p-5 text-center font-black text-xl text-green-700">{s.Pts}</td>
                                           </tr>
                                       ))}
                                   </tbody>
@@ -601,34 +655,59 @@ export default function AdminFinalMaster() {
                 </div>
               )}
 
-              {/* === LLAVES === */}
+              {/* === LLAVES (EL ÁRBOL ARRASTRABLE EN WEB) === */}
               {step === 'brackets' && (
                 <div className="w-full h-full flex flex-col">
-                  <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4 shrink-0">
-                    <h3 className="font-black uppercase text-slate-400 text-[10px] tracking-widest">Árbol de Eliminatorias</h3>
-                    <div className="flex gap-3">
+                  <div className="flex justify-between items-center mb-8 border-b-2 border-slate-100 pb-5 shrink-0">
+                    <h3 className="font-black uppercase text-slate-400 text-xs tracking-widest">Árbol de Eliminatorias</h3>
+                    <div className="flex gap-4">
                       {canAdvanceBracket && (
-                        <button onClick={() => handleAdvanceToNextBracketRound(latestBracketMatches, maxTier)} className="bg-emerald-500 text-white px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 shadow-sm animate-pulse">🏆 Siguiente Ronda</button>
+                        <button onClick={() => handleAdvanceToNextBracketRound(latestBracketMatches, maxTier)} className="bg-green-500 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 shadow-md animate-pulse">🏆 Siguiente Ronda</button>
                       )}
-                      <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket'}); setIsManualModalOpen(true); }} className="bg-green-50 text-green-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-100 border border-green-200 transition">+ Score de Llave</button>
+                      <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket'}); setIsManualModalOpen(true); }} className="bg-white text-slate-700 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 border-2 border-slate-200 transition shadow-sm">+ Score de Llave</button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {bracketMatches.map(bm => (
-                      <div key={bm.id} className="border border-slate-200 rounded-2xl p-6 bg-white shadow-sm hover:border-green-200 transition">
-                        <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
-                           <h4 className="font-black text-green-600 text-[10px] uppercase tracking-widest">{bm.round}</h4>
-                           {bm.status === 'pending' && <span className="text-[9px] font-bold text-amber-500 bg-amber-50 px-2 py-1 rounded">Pendiente</span>}
+                  
+                  {/* CONTENEDOR DRAG & PAN WEB */}
+                  <div 
+                    ref={sliderRef} onMouseDown={startDrag} onMouseLeave={stopDrag} onMouseUp={stopDrag} onMouseMove={onDrag}
+                    className={`w-full overflow-x-auto overflow-y-hidden bg-white border-2 border-slate-100 rounded-3xl min-h-[500px] select-none shadow-inner ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                  >
+                    <div className="flex items-center min-w-max p-12 h-full">
+                      {bracketTiers.map((tier, index) => {
+                        const matchesInTier = bracketMatches.filter(m => m.tier === tier);
+                        return (
+                          <div key={tier} className="flex flex-col justify-around min-w-[280px] h-full gap-10 mr-20 relative">
+                            {matchesInTier.map((bm, i) => (
+                              <div key={bm.id} className="relative z-10 group">
+                                <div onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket', groupName: bm.id, winnerName: bm.player1, loserName: bm.player2}); setIsManualModalOpen(true); }} className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm hover:border-green-400 hover:shadow-lg transition cursor-pointer">
+                                  <h4 className="font-black text-slate-400 text-[10px] uppercase tracking-widest mb-4 border-b border-slate-50 pb-2">{bm.round}</h4>
+                                  <div className={`p-3 rounded-xl border-2 mb-3 font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player1 ? 'border-green-200 bg-green-50 text-green-800' : 'border-transparent bg-slate-50 text-slate-700'}`}>
+                                    <span>{bm.player1}</span> {bm.winnerName === bm.player1 && <span className="text-green-500 font-black">✓</span>}
+                                  </div>
+                                  <div className={`p-3 rounded-xl border-2 font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player2 ? 'border-green-200 bg-green-50 text-green-800' : 'border-transparent bg-slate-50 text-slate-700'}`}>
+                                    <span>{bm.player2}</span> {bm.winnerName === bm.player2 && <span className="text-green-500 font-black">✓</span>}
+                                  </div>
+                                  <div className="mt-5 text-center font-black text-xl text-slate-800 tracking-tight">{bm.status === 'approved' ? bm.score : <span className="text-orange-400 text-[10px] uppercase tracking-widest">Pendiente</span>}</div>
+                                </div>
+                                
+                                {/* LA LÍNEA CONECTORA HORIZONTAL QUE CREA EL EFECTO DE ÁRBOL */}
+                                {index < bracketTiers.length - 1 && <div className="absolute top-1/2 -right-20 w-20 h-[3px] bg-slate-200 -z-10 group-hover:bg-green-400 transition-colors duration-300 rounded-full"></div>}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+                      {bracketTiers.length > 0 && bracketMatches.find(m => m.tier === Math.max(...bracketTiers))?.status === 'approved' && (
+                        <div className="flex flex-col items-center justify-center min-w-[200px] ml-10">
+                          <div className="bg-amber-100 p-6 rounded-full mb-6 shadow-xl border-4 border-amber-300">
+                            <span className="text-6xl">🏆</span>
+                          </div>
+                          <span className="font-black text-3xl text-slate-800 uppercase tracking-widest text-center">{bracketMatches.find(m => m.tier === Math.max(...bracketTiers))?.winnerName}</span>
+                          <span className="text-xs font-black text-green-600 mt-3 uppercase tracking-widest bg-green-50 px-4 py-2 rounded-full">Campeón del Torneo</span>
                         </div>
-                        <div className={`p-3 rounded-lg border mb-2 font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player1 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 bg-white text-slate-600'}`}>
-                          <span>{bm.player1}</span> {bm.winnerName === bm.player1 && <span className="text-emerald-500">WIN</span>}
-                        </div>
-                        <div className={`p-3 rounded-lg border font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player2 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 bg-white text-slate-600'}`}>
-                          <span>{bm.player2}</span> {bm.winnerName === bm.player2 && <span className="text-emerald-500">WIN</span>}
-                        </div>
-                        <div className="mt-5 text-center font-black text-xl text-slate-800 tracking-tight">{bm.status === 'approved' ? bm.score : '-'}</div>
-                      </div>
-                    ))}
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -636,10 +715,10 @@ export default function AdminFinalMaster() {
               {/* === AJUSTES === */}
               {step === 'settings' && (
                 <div className="py-20 flex justify-center">
-                  <div className="w-full max-w-lg p-10 bg-white border border-rose-200 rounded-3xl text-center shadow-sm">
-                    <h3 className="text-lg font-black mb-2 uppercase tracking-widest text-rose-600">Zona Restringida</h3>
-                    <p className="text-slate-500 font-bold text-xs mb-8">Eliminará el torneo y datos permanentemente.</p>
-                    <button onClick={handleDeleteFullTournament} className="w-full bg-rose-500 text-white p-4 rounded-xl font-black text-[11px] tracking-widest uppercase hover:bg-rose-600 transition shadow-sm">Eliminar Torneo</button>
+                  <div className="w-full max-w-lg p-10 bg-white border-2 border-red-100 rounded-[30px] text-center shadow-xl">
+                    <h3 className="text-xl font-black mb-3 uppercase tracking-widest text-red-600">Zona Restringida</h3>
+                    <p className="text-slate-500 font-bold text-sm mb-10">Eliminará el torneo y todos sus datos de forma permanente.</p>
+                    <button onClick={handleDeleteFullTournament} className="w-full bg-red-500 text-white p-5 rounded-2xl font-black text-[11px] tracking-widest uppercase hover:bg-red-600 transition shadow-md border-b-4 border-red-700">Eliminar Torneo</button>
                   </div>
                 </div>
               )}
@@ -649,52 +728,100 @@ export default function AdminFinalMaster() {
       )}
 
       {/* =========================================================================
-          MODAL CREAR TORNEO CON PORTADA Y CATEGORÍAS PRIVADAS (VERDE)
+          MODAL CREAR TORNEO + CROPPER DE IMAGEN DE PORTADA
           ========================================================================= */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100">
-            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-green-800">Nuevo Torneo</h2>
-            <div className="space-y-4">
-              <input type="text" placeholder="Nombre (Ej: Copa de Verano)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, name: e.target.value})} />
-              <input type="number" placeholder="Precio Inscripción" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, price: e.target.value})} />
-              
-              {/* SELECTOR DE CATEGORÍAS */}
-              <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition bg-white" value={newT.category} onChange={e => setNewT({...newT, category: e.target.value})}>
-                <optgroup label="Categorías Públicas">
-                  <option value="3ra">3ra Categoría</option>
-                  <option value="4ta">4ta Categoría</option>
-                  <option value="5ta A">5ta A</option>
-                  <option value="5ta B">5ta B</option>
-                </optgroup>
-                <optgroup label="Privados / Exclusivos">
-                  <option value="RCB">Copa RCB</option>
-                  <option value="CREMA">Raqueta CREMA</option>
-                </optgroup>
-              </select>
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-10 w-full max-w-md rounded-[30px] shadow-2xl border-2 border-white">
+            
+            {selectedImageFile ? (
+              // --- VISTA 2: CROPPER DE IMAGEN ---
+              <div className="space-y-6">
+                <h2 className="text-lg font-black text-center uppercase tracking-widest text-green-900">Ajustar Portada</h2>
+                <p className="text-[10px] text-center font-bold text-slate-400 uppercase tracking-widest">Arrastra para mover • Usa la barra para Zoom</p>
+                
+                {/* Contenedor del Cropper simulando el Cuadro de la App (Ratio 3:4) */}
+                <div 
+                  className="w-[240px] h-[320px] mx-auto overflow-hidden relative rounded-2xl shadow-inner bg-slate-100 cursor-move border-4 border-green-100"
+                  onMouseDown={e => { dragRef.current = { startX: e.clientX - cropConfig.x, startY: e.clientY - cropConfig.y, isDragging: true }; }}
+                  onMouseMove={e => { if(dragRef.current.isDragging) setCropConfig({...cropConfig, x: e.clientX - dragRef.current.startX, y: e.clientY - dragRef.current.startY}); }}
+                  onMouseUp={() => dragRef.current.isDragging = false}
+                  onMouseLeave={() => dragRef.current.isDragging = false}
+                >
+                  <img 
+                    ref={imageRef} 
+                    src={selectedImageFile} 
+                    alt="Preview" 
+                    draggable={false}
+                    style={{ transform: `translate(${cropConfig.x}px, ${cropConfig.y}px) scale(${cropConfig.scale})`, transformOrigin: 'top left', pointerEvents: 'none' }} 
+                  />
+                </div>
+                
+                {/* Barra de Zoom */}
+                <input type="range" min="0.1" max="3" step="0.05" value={cropConfig.scale} onChange={e => setCropConfig({...cropConfig, scale: parseFloat(e.target.value)})} className="w-full accent-green-600" />
+                
+                <div className="flex gap-3 pt-4">
+                  <button onClick={() => setSelectedImageFile(null)} className="flex-1 p-4 rounded-xl border-2 border-slate-100 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
+                  <button onClick={handleCropAndUpload} disabled={isUploadingImage} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm border-b-4 border-green-800 disabled:opacity-50">
+                    {isUploadingImage ? 'Procesando...' : 'Recortar y Subir'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // --- VISTA 1: FORMULARIO ---
+              <div className="space-y-5">
+                <h2 className="text-xl font-black mb-8 text-center uppercase tracking-widest text-green-900 border-b-2 border-green-50 pb-4">Nuevo Torneo</h2>
+                
+                <input type="text" placeholder="Nombre (Ej: Copa Verano)" className="w-full p-4 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 transition" onChange={e => setNewT({...newT, name: e.target.value})} />
+                
+                <div className="flex gap-3">
+                  <input type="number" placeholder="S/ Precio" className="w-1/2 p-4 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 transition" onChange={e => setNewT({...newT, price: e.target.value})} />
+                  
+                  <select className="w-1/2 p-4 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700 transition cursor-pointer" value={newT.category} onChange={e => setNewT({...newT, category: e.target.value})}>
+                    <optgroup label="Categorías Públicas">
+                      <option value="3ra">3ra Categoría</option>
+                      <option value="4ta">4ta Categoría</option>
+                      <option value="5ta A">5ta A</option>
+                      <option value="5ta B">5ta B</option>
+                    </optgroup>
+                    <optgroup label="Privados / Exclusivos">
+                      <option value="RCB">Copa RCB</option>
+                      <option value="CREMA">Raqueta CREMA</option>
+                    </optgroup>
+                  </select>
+                </div>
 
-              <input type="url" placeholder="URL Imagen Portada (Opcional)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, coverUrl: e.target.value})} />
-            </div>
-            <div className="flex gap-3 mt-8">
-              <button onClick={() => setIsModalOpen(false)} className="flex-1 p-4 rounded-xl border border-slate-200 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
-              <button onClick={handleCreateTournament} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm">Crear</button>
-            </div>
+                {/* BOTÓN PARA SUBIR IMAGEN LOCAL */}
+                <div className="relative w-full">
+                  <input type="file" accept="image/*" onChange={handleFileSelect} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                  <div className="w-full p-5 rounded-xl border-2 border-dashed border-green-300 bg-green-50 text-center flex flex-col items-center">
+                    <span className="text-xl mb-1">📸</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-green-700">{newT.coverUrl ? '¡Portada Lista!' : 'Toca para subir la Portada'}</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-6 border-t-2 border-slate-50">
+                  <button onClick={() => setIsModalOpen(false)} className="flex-1 p-4 rounded-xl border-2 border-slate-100 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
+                  <button onClick={handleCreateTournament} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm border-b-4 border-green-800">Crear Torneo</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* MODAL DE RESULTADOS (MANUAL PARA ADMIN) */}
       {isManualModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100">
-            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-green-900">
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-10 w-full max-w-lg rounded-[30px] shadow-2xl border-2 border-white">
+            <h2 className="text-lg font-black mb-8 text-center uppercase tracking-widest border-b-2 border-green-50 pb-4 text-green-900">
               {manualMatch.type === 'bracket' ? 'Score de Eliminatoria' : 'Score de Grupo'}
             </h2>
             
             <div className="space-y-6">
               {manualMatch.type === 'bracket' ? (
                 <>
-                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => {
+                  <select className="w-full p-4 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700 transition" value={manualMatch.groupName} onChange={e => {
                     const match = bracketMatches.find(bm => bm.id === e.target.value);
                     if(match) setManualMatch({...manualMatch, groupName: match.id, winnerName: match.player1, loserName: match.player2});
                   }}>
@@ -703,10 +830,10 @@ export default function AdminFinalMaster() {
                   </select>
 
                   {manualMatch.groupName && (
-                    <div className="grid grid-cols-2 gap-4 bg-green-50/50 p-4 rounded-xl border border-green-100">
+                    <div className="grid grid-cols-2 gap-4 bg-green-50 p-5 rounded-2xl border border-green-100">
                       <div>
                         <label className="block text-[9px] font-black text-green-600 mb-2 uppercase tracking-widest">Ganador</label>
-                        <select className="w-full p-3 rounded-lg border border-green-300 font-bold text-sm outline-none text-green-700 bg-white" value={manualMatch.winnerName} onChange={e => {
+                        <select className="w-full p-3 rounded-xl border-2 border-green-200 font-bold text-sm outline-none focus:border-green-500 text-green-800 bg-white shadow-sm" value={manualMatch.winnerName} onChange={e => {
                             const m = bracketMatches.find(bm => bm.id === manualMatch.groupName);
                             const l = m.player1 === e.target.value ? m.player2 : m.player1;
                             setManualMatch({...manualMatch, winnerName: e.target.value, loserName: l});
@@ -717,23 +844,23 @@ export default function AdminFinalMaster() {
                       </div>
                       <div>
                         <label className="block text-[9px] font-black text-slate-400 mb-2 uppercase tracking-widest">Perdedor</label>
-                        <div className="w-full p-3 rounded-lg border border-slate-200 font-bold text-sm bg-slate-100 text-slate-500 overflow-hidden text-ellipsis whitespace-nowrap" title={manualMatch.loserName}>{manualMatch.loserName}</div>
+                        <div className="w-full p-3 rounded-xl border-2 border-slate-100 font-bold text-sm bg-slate-100 text-slate-500 overflow-hidden text-ellipsis whitespace-nowrap">{manualMatch.loserName}</div>
                       </div>
                     </div>
                   )}
                 </>
               ) : (
                 <>
-                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
+                  <select className="w-full p-4 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700 transition" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
                      <option value="">Seleccionar Grupo...</option>
                      {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
 
                   {manualMatch.groupName && (
-                    <div className="grid grid-cols-2 gap-4 bg-green-50/50 p-4 rounded-xl border border-green-100">
+                    <div className="grid grid-cols-2 gap-4 bg-green-50 p-5 rounded-2xl border border-green-100">
                       <div>
                         <label className="block text-[9px] font-black text-green-600 mb-2 uppercase tracking-widest">Ganador</label>
-                        <select className="w-full p-3 rounded-lg border border-green-300 font-bold text-sm outline-none text-green-700 bg-white" value={manualMatch.winnerName} onChange={e => {
+                        <select className="w-full p-3 rounded-xl border-2 border-green-200 font-bold text-sm outline-none focus:border-green-500 text-green-800 bg-white shadow-sm" value={manualMatch.winnerName} onChange={e => {
                           const l = groups[manualMatch.groupName].find((p:any) => p.name !== e.target.value)?.name || '';
                           setManualMatch({...manualMatch, winnerName: e.target.value, loserName: manualMatch.loserName === e.target.value ? l : manualMatch.loserName});
                         }}>
@@ -743,7 +870,7 @@ export default function AdminFinalMaster() {
                       </div>
                       <div>
                         <label className="block text-[9px] font-black text-slate-400 mb-2 uppercase tracking-widest">Perdedor</label>
-                        <select className="w-full p-3 rounded-lg border border-slate-200 font-bold text-sm outline-none focus:border-green-500 text-slate-600 bg-white" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                        <select className="w-full p-3 rounded-xl border-2 border-slate-100 font-bold text-sm outline-none focus:border-green-500 text-slate-600 bg-white shadow-sm" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.filter((p:any) => p.name !== manualMatch.winnerName).map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
@@ -754,54 +881,54 @@ export default function AdminFinalMaster() {
               )}
               
               {/* TOGGLE W.O. */}
-              <div className="flex items-center justify-between p-4 bg-amber-50 rounded-xl border border-amber-100">
+              <div className="flex items-center justify-between p-5 bg-amber-50 rounded-2xl border-2 border-amber-100">
                 <span className="font-black text-xs uppercase tracking-widest text-amber-700">Victoria por W.O.</span>
-                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-5 h-5 accent-amber-500 rounded cursor-pointer" />
+                <input type="checkbox" checked={isWO} onChange={e => setIsWO(e.target.checked)} className="w-6 h-6 accent-amber-500 rounded cursor-pointer" />
               </div>
 
               {/* CASILLAS NUMÉRICAS */}
               {!isWO && (
-                <div className="bg-slate-50 p-6 rounded-xl border border-slate-100">
-                  <p className="text-[9px] font-black text-slate-400 text-center uppercase mb-6 tracking-widest">Score Exacto</p>
+                <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-100">
+                  <p className="text-[10px] font-black text-slate-400 text-center uppercase mb-6 tracking-widest">Score Exacto</p>
                   
                   {/* SET 1 */}
-                  <div className="flex items-center justify-center gap-3 mb-4">
-                    <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 1</span>
-                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                  <div className="flex items-center justify-center gap-4 mb-5">
+                    <span className="font-black text-slate-400 w-12 text-right text-[11px] uppercase tracking-wider">Set 1</span>
+                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                   </div>
                   
                   {/* SET 2 */}
-                  <div className="flex items-center justify-center gap-3 mb-6">
-                    <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 2</span>
-                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                  <div className="flex items-center justify-center gap-4 mb-6">
+                    <span className="font-black text-slate-400 w-12 text-right text-[11px] uppercase tracking-wider">Set 2</span>
+                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                   </div>
 
                   {/* TOGGLE 3ER SET */}
-                  <div className="flex items-center justify-between mb-6 border-t border-slate-200 pt-4">
+                  <div className="flex items-center justify-between mb-6 border-t-2 border-slate-100 pt-5">
                     <span className="font-black text-slate-500 text-[10px] uppercase tracking-widest">Super Tie-break (3er Set)</span>
-                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-4 h-4 accent-green-500 rounded cursor-pointer" />
+                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-5 h-5 accent-green-500 rounded cursor-pointer" />
                   </div>
 
                   {/* SET 3 */}
                   {hasThirdSet && (
-                    <div className="flex items-center justify-center gap-3">
-                      <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 3</span>
-                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                    <div className="flex items-center justify-center gap-4">
+                      <span className="font-black text-slate-400 w-12 text-right text-[11px] uppercase tracking-wider">Set 3</span>
+                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                       <span className="font-black text-slate-300">-</span>
-                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
+                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-14 h-14 text-center text-xl font-black rounded-xl border-2 border-slate-200 outline-none focus:border-green-500 text-slate-700 transition shadow-sm" />
                     </div>
                   )}
                 </div>
               )}
             </div>
             
-            <div className="flex gap-3 mt-8 pt-6 border-t border-slate-100">
-              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-4 rounded-xl border border-slate-200 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
-              <button onClick={handleAddManualMatch} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm">Guardar Score</button>
+            <div className="flex gap-4 mt-8 pt-6 border-t-2 border-slate-50">
+              <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-4 rounded-xl border-2 border-slate-100 font-black text-[11px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
+              <button onClick={handleAddManualMatch} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[11px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm border-b-4 border-green-800">Guardar Score</button>
             </div>
           </div>
         </div>
