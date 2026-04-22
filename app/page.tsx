@@ -26,7 +26,7 @@ export default function AdminFinalMaster() {
   const [reportedMatches, setReportedMatches] = useState<any[]>([]); 
   const [bracketMatches, setBracketMatches] = useState<any[]>([]); 
   
-  // NUEVO: Agregado coverUrl para la imagen de portada
+  // NUEVO: Agregado category (por defecto 3ra) y coverUrl
   const [newT, setNewT] = useState({ name: '', category: '3ra', yape: '', desc: '', price: '', startDate: '', endDate: '', status: 'Inscripciones', coverUrl: '' });
   const [manualMatch, setManualMatch] = useState({ winnerName: '', loserName: '', groupName: '', type: 'group' });
 
@@ -113,17 +113,23 @@ export default function AdminFinalMaster() {
     catch (err) { alert("Error de acceso. Revisa tus credenciales."); }
   };
 
+  // =========================================================================
+  // CREACIÓN DE TORNEO CON LOGICA PRIVADA Y PORTADA
+  // =========================================================================
   const handleCreateTournament = async () => {
     if (!newT.name || !newT.price) return alert("Faltan datos obligatorios");
     
-    // Imagen por defecto de arcilla si el admin no pone URL
     const finalCoverUrl = newT.coverUrl.trim() !== '' 
       ? newT.coverUrl 
-      : 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800&auto=format&fit=crop';
+      : 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800&auto=format&fit=crop'; // Arcilla por defecto
+
+    // Lógica para detectar si es un torneo privado de tu negocio
+    const isPrivateTournament = newT.category === 'RCB' || newT.category === 'CREMA';
 
     await addDoc(collection(db, "tournaments"), { 
       ...newT, 
       coverUrl: finalCoverUrl,
+      isPrivate: isPrivateTournament, // Bandera de seguridad para la App
       participantsIds: [], 
       createdAt: serverTimestamp() 
     });
@@ -143,7 +149,6 @@ export default function AdminFinalMaster() {
     setView('main'); setActiveTournament(null);
   };
 
-  // NUEVO: FINALIZAR TORNEO
   const handleFinishTournament = async () => {
     if (!confirm("¿Seguro que deseas finalizar el torneo? Se cerrarán las ediciones y pasará al Historial de la App.")) return;
     await updateDoc(doc(db, "tournaments", activeTournament.id), { status: 'Finalizado' });
@@ -376,17 +381,17 @@ export default function AdminFinalMaster() {
   };
 
   // =========================================================================
-  // UI: PALETA INDIGO (FLAT DESIGN DE ALTO NIVEL)
+  // UI: PALETA VERDE (FLAT DESIGN DE ALTO NIVEL)
   // =========================================================================
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-indigo-500 uppercase tracking-widest">Cargando...</p></div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-green-500 uppercase tracking-widest">Cargando...</p></div>;
 
   if (!user || !isAdmin) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <form onSubmit={handleLogin} className="bg-white p-10 shadow-sm border border-slate-200 w-full max-w-sm rounded-[30px]">
-        <h1 className="text-xl font-black text-center mb-8 text-indigo-900 tracking-tight">Acceso Master</h1>
-        <input type="email" required placeholder="Correo" className="w-full p-4 mb-4 border border-slate-200 rounded-xl font-bold outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" onChange={e => setEmail(e.target.value)} />
-        <input type="password" required placeholder="Contraseña" className="w-full p-4 mb-8 border border-slate-200 rounded-xl font-bold outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" onChange={e => setPassword(e.target.value)} />
-        <button type="submit" className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold tracking-wide hover:bg-indigo-700 transition">ENTRAR AL SISTEMA</button>
+        <h1 className="text-xl font-black text-center mb-8 text-green-900 tracking-tight">Acceso Master</h1>
+        <input type="email" required placeholder="Correo" className="w-full p-4 mb-4 border border-slate-200 rounded-xl font-bold outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition" onChange={e => setEmail(e.target.value)} />
+        <input type="password" required placeholder="Contraseña" className="w-full p-4 mb-8 border border-slate-200 rounded-xl font-bold outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition" onChange={e => setPassword(e.target.value)} />
+        <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-bold tracking-wide hover:bg-green-700 transition">ENTRAR AL SISTEMA</button>
       </form>
     </div>
   );
@@ -398,20 +403,20 @@ export default function AdminFinalMaster() {
         <div className="p-10 max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-10 border-b border-slate-200 pb-4">
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">Panel de Torneos</h1>
-            <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold text-sm tracking-wide hover:bg-indigo-700 transition shadow-sm">+ NUEVO TORNEO</button>
+            <button onClick={() => setIsModalOpen(true)} className="bg-green-600 text-white px-6 py-3 rounded-xl font-bold text-sm tracking-wide hover:bg-green-700 transition shadow-sm border border-green-700">+ NUEVO TORNEO</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {tournaments.map(t => (
-              <div key={t.id} className="bg-white rounded-2xl border border-slate-200 hover:border-indigo-400 hover:shadow-md transition overflow-hidden flex flex-col">
+              <div key={t.id} className="bg-white rounded-2xl border border-slate-200 hover:border-green-400 hover:shadow-md transition overflow-hidden flex flex-col">
                 <div className="h-32 bg-slate-200 relative">
-                  <img src={t.coverUrl} alt="Cover" className="w-full h-full object-cover" />
+                  <img src={t.coverUrl || 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?q=80&w=800'} alt="Cover" className="w-full h-full object-cover" />
                   <div className="absolute top-3 right-3 bg-black/80 backdrop-blur text-white text-[9px] font-black px-2 py-1 rounded uppercase tracking-wider">{t.status}</div>
                 </div>
                 <div className="p-5 flex flex-col flex-grow">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{t.category}</span>
                   <h2 className="text-lg font-black mb-4 text-slate-800 leading-tight">{t.name}</h2>
                   <div className="mt-auto">
-                    <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full bg-slate-50 text-indigo-700 py-3 rounded-xl font-bold text-xs uppercase tracking-widest border border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 transition">Gestionar</button>
+                    <button onClick={() => { setActiveTournament(t); setStep('groups'); setView('manage'); }} className="w-full bg-slate-50 text-green-700 py-3 rounded-xl font-bold text-xs uppercase tracking-widest border border-slate-200 hover:bg-green-50 hover:border-green-200 transition">Gestionar</button>
                   </div>
                 </div>
               </div>
@@ -421,13 +426,12 @@ export default function AdminFinalMaster() {
       ) : (
         <div className="p-8 max-w-7xl mx-auto">
           <div className="flex items-center gap-4 mb-8 border-b border-slate-200 pb-4">
-            <button onClick={() => setView('main')} className="text-slate-400 hover:text-indigo-600 font-black text-xl px-2 transition">&larr;</button>
+            <button onClick={() => setView('main')} className="text-slate-400 hover:text-green-600 font-black text-xl px-2 transition">&larr;</button>
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">{activeTournament.name}</h2>
             <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest ml-2 ${activeTournament.status === 'Inscripciones' ? 'bg-blue-100 text-blue-700' : activeTournament.status === 'Activo' ? 'bg-emerald-100 text-emerald-700' : activeTournament.status === 'Finalizado' ? 'bg-slate-200 text-slate-600' : 'bg-purple-100 text-purple-700'}`}>{activeTournament.status}</span>
             <div className="ml-auto flex gap-3">
               {activeTournament.status === 'Inscripciones' && <button onClick={handleGenerateFixture} className="bg-blue-500 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-blue-600 transition shadow-sm">Generar Fixture &rarr;</button>}
               {activeTournament.status === 'Activo' && <button onClick={handleGenerateBrackets} className="bg-purple-500 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-purple-600 transition shadow-sm">Crear Llaves &rarr;</button>}
-              {/* BOTON DE FINALIZAR */}
               {(activeTournament.status === 'Fase Final' || activeTournament.status === 'Activo') && <button onClick={handleFinishTournament} className="bg-slate-800 text-white px-5 py-2 rounded-lg font-bold text-xs tracking-widest uppercase hover:bg-black transition shadow-sm">🏁 Finalizar Torneo</button>}
             </div>
           </div>
@@ -435,7 +439,7 @@ export default function AdminFinalMaster() {
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
             <div className="flex bg-slate-50 border-b border-slate-200 overflow-x-auto">
                {['groups', 'standings', 'history', 'brackets', 'rules', 'settings'].map(s => (
-                 <button key={s} onClick={() => setStep(s)} className={`px-8 py-4 text-[11px] font-black uppercase tracking-widest transition ${step === s ? 'bg-white border-t-2 border-indigo-600 text-indigo-700' : 'text-slate-500 hover:text-indigo-700 hover:bg-white'}`}>
+                 <button key={s} onClick={() => setStep(s)} className={`px-8 py-4 text-[11px] font-black uppercase tracking-widest transition ${step === s ? 'bg-white border-t-2 border-green-600 text-green-700' : 'text-slate-500 hover:text-green-700 hover:bg-white'}`}>
                     {s === 'groups' ? 'Grupos' : s === 'standings' ? 'Posiciones' : s === 'history' ? 'Resultados' : s === 'brackets' ? 'Llaves' : s === 'rules' ? 'Reglas' : 'Ajustes'}
                  </button>
                ))}
@@ -447,15 +451,15 @@ export default function AdminFinalMaster() {
               {step === 'groups' && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
                   <div className="lg:col-span-4 lg:border-r border-slate-200 lg:pr-8">
-                    <div className="mb-8 p-5 bg-indigo-50 border border-indigo-100 rounded-xl">
-                      <h4 className="text-[10px] font-black text-indigo-700 uppercase mb-2 tracking-widest">Crear Invitado</h4>
+                    <div className="mb-8 p-5 bg-green-50 border border-green-100 rounded-xl">
+                      <h4 className="text-[10px] font-black text-green-700 uppercase mb-2 tracking-widest">Crear Invitado</h4>
                       <div className="flex gap-2">
-                        <input type="text" placeholder="Ej: Carlos Perez" className="w-full p-2 rounded-lg border border-indigo-200 text-sm font-bold outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400" value={guestName} onChange={e => setGuestName(e.target.value)} />
-                        <button onClick={handleAddGuest} className="bg-indigo-600 text-white px-4 rounded-lg font-bold hover:bg-indigo-700 transition">+</button>
+                        <input type="text" placeholder="Ej: Carlos Perez" className="w-full p-2 rounded-lg border border-green-200 text-sm font-bold outline-none focus:border-green-400 focus:ring-1 focus:ring-green-400" value={guestName} onChange={e => setGuestName(e.target.value)} />
+                        <button onClick={handleAddGuest} className="bg-green-600 text-white px-4 rounded-lg font-bold hover:bg-green-700 transition">+</button>
                       </div>
                     </div>
                     <h3 className="font-black text-[10px] uppercase mb-4 text-slate-400 tracking-widest">Base de Jugadores</h3>
-                    <input type="text" placeholder="Buscar jugador..." className="w-full p-3 rounded-xl border border-slate-200 mb-4 font-bold outline-none focus:border-indigo-400 text-sm" onChange={e => setSearch(e.target.value)} />
+                    <input type="text" placeholder="Buscar jugador..." className="w-full p-3 rounded-xl border border-slate-200 mb-4 font-bold outline-none focus:border-green-400 text-sm" onChange={e => setSearch(e.target.value)} />
                     <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
                       {appPlayers.filter(p => p.name?.toLowerCase().includes(search.toLowerCase())).map(p => (
                         <div key={p.id} className="p-3 border border-slate-100 rounded-xl bg-white flex flex-col hover:border-slate-300 transition">
@@ -465,7 +469,7 @@ export default function AdminFinalMaster() {
                           </div>
                           <div className="flex flex-wrap gap-2 mt-3 pt-2">
                             {Object.keys(groups).map(gName => (
-                              <button key={gName} onClick={() => setGroups({...groups, [gName]: [...(groups[gName]||[]), p]})} className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300 uppercase transition">
+                              <button key={gName} onClick={() => setGroups({...groups, [gName]: [...(groups[gName]||[]), p]})} className="bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-[10px] font-bold text-slate-500 hover:bg-green-50 hover:text-green-700 hover:border-green-300 uppercase transition">
                                 + {gName.substring(0, 8)}
                               </button>
                             ))}
@@ -481,9 +485,9 @@ export default function AdminFinalMaster() {
                         <div key={g} className="bg-white p-6 rounded-xl border border-slate-200 group relative">
                           <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
                             {editingGroup === g ? (
-                              <input autoFocus defaultValue={g} onBlur={(e) => handleRenameGroup(g, e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(g, e.currentTarget.value)} className="font-black uppercase text-lg border-b-2 border-indigo-500 outline-none w-3/4 text-indigo-700" />
+                              <input autoFocus defaultValue={g} onBlur={(e) => handleRenameGroup(g, e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameGroup(g, e.currentTarget.value)} className="font-black uppercase text-lg border-b-2 border-green-500 outline-none w-3/4 text-green-700" />
                             ) : (
-                              <h4 className="font-black uppercase text-lg text-slate-800 cursor-pointer hover:text-indigo-600 transition" onClick={() => setEditingGroup(g)}>{g}</h4>
+                              <h4 className="font-black uppercase text-lg text-slate-800 cursor-pointer hover:text-green-600 transition" onClick={() => setEditingGroup(g)}>{g}</h4>
                             )}
                             <button onClick={() => handleDeleteGroup(g)} className="text-slate-300 hover:text-red-500 text-xs font-bold uppercase transition">X</button>
                           </div>
@@ -499,12 +503,12 @@ export default function AdminFinalMaster() {
                         </div>
                       ))}
                       
-                      <button onClick={handleAddGroup} className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center p-6 hover:bg-indigo-50 hover:border-indigo-300 transition group min-h-[150px]">
-                        <span className="text-2xl font-black text-slate-300 group-hover:text-indigo-500 mb-2 transition">+</span>
-                        <span className="font-black text-slate-400 group-hover:text-indigo-600 uppercase tracking-widest text-[10px] transition">Añadir Grupo</span>
+                      <button onClick={handleAddGroup} className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center p-6 hover:bg-green-50 hover:border-green-300 transition group min-h-[150px]">
+                        <span className="text-2xl font-black text-slate-300 group-hover:text-green-500 mb-2 transition">+</span>
+                        <span className="font-black text-slate-400 group-hover:text-green-600 uppercase tracking-widest text-[10px] transition">Añadir Grupo</span>
                       </button>
                     </div>
-                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Guardado."); }} className="mt-8 w-full bg-indigo-600 text-white rounded-xl p-4 font-bold text-[11px] tracking-widest uppercase hover:bg-indigo-700 transition shadow-sm">Guardar Estructura</button>
+                    <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "groups"), {structure: groups}); alert("Guardado."); }} className="mt-8 w-full bg-green-600 text-white rounded-xl p-4 font-bold text-[11px] tracking-widest uppercase hover:bg-green-700 transition shadow-sm">Guardar Estructura</button>
                   </div>
                 </div>
               )}
@@ -516,7 +520,7 @@ export default function AdminFinalMaster() {
                     <h3 className="text-sm font-black mb-3 uppercase text-slate-800 tracking-wide">Lógica de Clasificación</h3>
                     <div className="bg-white p-5 rounded-xl border border-slate-200 flex justify-between items-center">
                       <span className="font-bold text-[11px] uppercase tracking-widest text-slate-500">Jugadores que avanzan a Llaves (Por Grupo):</span>
-                      <input type="number" min="1" value={scoringRules.advancingPerGroup} onChange={e => setScoringRules({...scoringRules, advancingPerGroup: Number(e.target.value)})} className="w-20 p-2 text-lg font-black border border-slate-300 rounded-lg text-center outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-indigo-700" />
+                      <input type="number" min="1" value={scoringRules.advancingPerGroup} onChange={e => setScoringRules({...scoringRules, advancingPerGroup: Number(e.target.value)})} className="w-20 p-2 text-lg font-black border border-slate-300 rounded-lg text-center outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-green-700" />
                     </div>
                   </div>
 
@@ -524,10 +528,10 @@ export default function AdminFinalMaster() {
                   <div className="grid grid-cols-2 gap-4 mb-8">
                     <div className="bg-white p-5 rounded-xl border border-slate-200"><label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">Puntos Victoria</label><input type="number" value={scoringRules.win} onChange={e => setScoringRules({...scoringRules, win: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-slate-200 rounded-lg outline-none focus:border-emerald-500 text-emerald-600 transition" /></div>
                     <div className="bg-white p-5 rounded-xl border border-slate-200"><label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">Puntos Derrota</label><input type="number" value={scoringRules.loss} onChange={e => setScoringRules({...scoringRules, loss: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-slate-200 rounded-lg outline-none focus:border-slate-500 text-slate-600 transition" /></div>
-                    <div className="bg-emerald-50 p-5 rounded-xl border border-emerald-100"><label className="block text-[10px] font-black text-emerald-600 mb-2 uppercase tracking-widest">Victoria W.O.</label><input type="number" value={scoringRules.winWO} onChange={e => setScoringRules({...scoringRules, winWO: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-emerald-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-emerald-800 transition" /></div>
+                    <div className="bg-emerald-50 p-5 rounded-xl border border-emerald-100"><label className="block text-[10px] font-black text-emerald-600 mb-2 uppercase tracking-widest">Victoria W.O.</label><input type="number" value={scoringRules.winWO} onChange={e => setScoringRules({...scoringRules, winWO: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-emerald-200 rounded-lg outline-none focus:border-emerald-500 bg-white text-emerald-700 transition" /></div>
                     <div className="bg-rose-50 p-5 rounded-xl border border-rose-100"><label className="block text-[10px] font-black text-rose-600 mb-2 uppercase tracking-widest">Derrota W.O.</label><input type="number" value={scoringRules.lossWO} onChange={e => setScoringRules({...scoringRules, lossWO: Number(e.target.value)})} className="w-full p-3 text-xl font-black border border-rose-200 rounded-lg outline-none focus:border-rose-500 bg-white text-rose-600 transition" /></div>
                   </div>
-                  <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true }); alert("Reglas guardadas."); }} className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold text-[11px] tracking-widest uppercase hover:bg-indigo-700 transition shadow-sm">Guardar y Recalcular Tablas</button>
+                  <button onClick={async () => { await setDoc(doc(db, "tournaments", activeTournament.id, "configuration", "rules"), { ...scoringRules, updatedAt: serverTimestamp() }, { merge: true }); alert("Reglas guardadas."); }} className="w-full bg-green-600 text-white p-4 rounded-xl font-bold text-[11px] tracking-widest uppercase hover:bg-green-700 transition shadow-sm">Guardar y Recalcular Tablas</button>
                 </div>
               )}
 
@@ -536,11 +540,11 @@ export default function AdminFinalMaster() {
                 <div className="max-w-5xl mx-auto">
                   <div className="flex justify-between items-center mb-6">
                     <h3 className="font-black uppercase text-slate-400 text-[10px] tracking-widest">Monitor de Fase de Grupos</h3>
-                    <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'group'}); setIsManualModalOpen(true); }} className="bg-indigo-50 text-indigo-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 border border-indigo-200 transition">+ Registrar Score</button>
+                    <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'group'}); setIsManualModalOpen(true); }} className="bg-green-50 text-green-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-100 border border-green-200 transition">+ Registrar Score</button>
                   </div>
                   <div className="space-y-3">
                     {reportedMatches.filter(m => m.status === 'approved' || m.status === 'rival_pending' || m.status === 'rejected').map(m => (
-                      <div key={m.id} className={`p-4 rounded-xl bg-white border flex justify-between items-center transition ${m.status === 'rejected' ? 'border-rose-300 shadow-[0_0_10px_rgba(248,113,113,0.2)]' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <div key={m.id} className={`p-4 rounded-xl bg-white border flex justify-between items-center transition ${m.status === 'rejected' ? 'border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.2)]' : 'border-slate-200 hover:border-slate-300'}`}>
                         <div className="flex items-center">
                           <span className="text-[9px] font-black bg-slate-100 text-slate-500 px-2 py-1 rounded uppercase mr-4 tracking-wider">{m.groupName}</span>
                           <span className="font-bold text-sm text-slate-800">{m.winnerName} <span className="text-slate-300 mx-2 text-xs font-normal">vs</span> {m.loserName}</span>
@@ -572,10 +576,10 @@ export default function AdminFinalMaster() {
                       const standings = calculateStandings(gName); 
                       return (
                           <div key={gName} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                              <div className="bg-slate-50 p-4 border-b border-slate-200"><h4 className="font-black text-indigo-900 text-sm uppercase tracking-widest">{gName}</h4></div>
+                              <div className="bg-slate-50 p-4 border-b border-slate-200"><h4 className="font-black text-green-900 text-sm uppercase tracking-widest">{gName}</h4></div>
                               <table className="w-full text-left">
                                   <thead className="bg-white text-slate-400 text-[10px] font-black uppercase border-b border-slate-100">
-                                      <tr><th className="p-4">Jugador</th><th className="p-4 text-center">PJ</th><th className="p-4 text-center">PG</th><th className="p-4 text-center text-indigo-500">PTS</th></tr>
+                                      <tr><th className="p-4">Jugador</th><th className="p-4 text-center">PJ</th><th className="p-4 text-center">PG</th><th className="p-4 text-center text-green-500">PTS</th></tr>
                                   </thead>
                                   <tbody>
                                       {standings.map((s: any, i: number) => (
@@ -586,7 +590,7 @@ export default function AdminFinalMaster() {
                                             </td>
                                             <td className="p-4 text-center font-bold text-slate-400 text-sm">{s.PJ}</td>
                                             <td className="p-4 text-center font-bold text-slate-400 text-sm">{s.PG}</td>
-                                            <td className="p-4 text-center font-black text-lg text-indigo-600">{s.Pts}</td>
+                                            <td className="p-4 text-center font-black text-lg text-green-600">{s.Pts}</td>
                                           </tr>
                                       ))}
                                   </tbody>
@@ -606,45 +610,25 @@ export default function AdminFinalMaster() {
                       {canAdvanceBracket && (
                         <button onClick={() => handleAdvanceToNextBracketRound(latestBracketMatches, maxTier)} className="bg-emerald-500 text-white px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 shadow-sm animate-pulse">🏆 Siguiente Ronda</button>
                       )}
-                      <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket'}); setIsManualModalOpen(true); }} className="bg-slate-100 text-slate-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 border border-slate-300 transition">Reg. Manual</button>
+                      <button onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket'}); setIsManualModalOpen(true); }} className="bg-green-50 text-green-700 px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-green-100 border border-green-200 transition">+ Score de Llave</button>
                     </div>
                   </div>
-                  
-                  <div 
-                    ref={sliderRef} onMouseDown={startDrag} onMouseLeave={stopDrag} onMouseUp={stopDrag} onMouseMove={onDrag}
-                    className={`w-full overflow-x-auto overflow-y-hidden bg-slate-50 border border-slate-200 rounded-2xl min-h-[500px] select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-                  >
-                    <div className="flex items-center min-w-max p-10 h-full">
-                      {bracketTiers.map((tier, index) => {
-                        const matchesInTier = bracketMatches.filter(m => m.tier === tier);
-                        return (
-                          <div key={tier} className="flex flex-col justify-around min-w-[280px] h-full gap-8 mr-16 relative">
-                            {matchesInTier.map((bm, i) => (
-                              <div key={bm.id} className="relative z-10 group">
-                                <div onClick={() => { resetModal(); setManualMatch({...manualMatch, type: 'bracket', groupName: bm.id, winnerName: bm.player1, loserName: bm.player2}); setIsManualModalOpen(true); }} className="bg-white border-2 border-slate-200 rounded-xl p-4 shadow-sm hover:border-indigo-400 hover:shadow-md transition cursor-pointer">
-                                  <h4 className="font-black text-slate-400 text-[9px] uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">{bm.round}</h4>
-                                  <div className={`p-2 rounded border mb-2 font-bold text-xs flex justify-between ${bm.winnerName === bm.player1 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 text-slate-600'}`}>
-                                    <span className="truncate pr-2">{bm.player1}</span> {bm.winnerName === bm.player1 && <span className="text-emerald-500 font-black">✓</span>}
-                                  </div>
-                                  <div className={`p-2 rounded border font-bold text-xs flex justify-between ${bm.winnerName === bm.player2 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 text-slate-600'}`}>
-                                    <span className="truncate pr-2">{bm.player2}</span> {bm.winnerName === bm.player2 && <span className="text-emerald-500 font-black">✓</span>}
-                                  </div>
-                                  <div className="mt-3 text-center font-black text-sm text-slate-800">{bm.status === 'approved' ? bm.score : <span className="text-orange-400 text-[10px] uppercase">Pendiente</span>}</div>
-                                </div>
-                                {index < bracketTiers.length - 1 && <div className="absolute top-1/2 -right-16 w-16 h-[2px] bg-slate-300 -z-10 group-hover:bg-indigo-400 transition"></div>}
-                              </div>
-                            ))}
-                          </div>
-                        )
-                      })}
-                      {bracketTiers.length > 0 && bracketMatches.find(m => m.tier === Math.max(...bracketTiers))?.status === 'approved' && (
-                        <div className="flex flex-col items-center justify-center min-w-[200px]">
-                          <span className="text-5xl mb-4">🏆</span>
-                          <span className="font-black text-2xl text-slate-800 uppercase tracking-widest text-center">{bracketMatches.find(m => m.tier === Math.max(...bracketTiers))?.winnerName}</span>
-                          <span className="text-xs font-bold text-indigo-600 mt-2 uppercase tracking-widest">Campeón</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {bracketMatches.map(bm => (
+                      <div key={bm.id} className="border border-slate-200 rounded-2xl p-6 bg-white shadow-sm hover:border-green-200 transition">
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
+                           <h4 className="font-black text-green-600 text-[10px] uppercase tracking-widest">{bm.round}</h4>
+                           {bm.status === 'pending' && <span className="text-[9px] font-bold text-amber-500 bg-amber-50 px-2 py-1 rounded">Pendiente</span>}
                         </div>
-                      )}
-                    </div>
+                        <div className={`p-3 rounded-lg border mb-2 font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player1 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 bg-white text-slate-600'}`}>
+                          <span>{bm.player1}</span> {bm.winnerName === bm.player1 && <span className="text-emerald-500">WIN</span>}
+                        </div>
+                        <div className={`p-3 rounded-lg border font-bold text-sm flex justify-between transition ${bm.winnerName === bm.player2 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-100 bg-white text-slate-600'}`}>
+                          <span>{bm.player2}</span> {bm.winnerName === bm.player2 && <span className="text-emerald-500">WIN</span>}
+                        </div>
+                        <div className="mt-5 text-center font-black text-xl text-slate-800 tracking-tight">{bm.status === 'approved' ? bm.score : '-'}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -665,20 +649,35 @@ export default function AdminFinalMaster() {
       )}
 
       {/* =========================================================================
-          MODAL CREAR TORNEO CON PORTADA
+          MODAL CREAR TORNEO CON PORTADA Y CATEGORÍAS PRIVADAS (VERDE)
           ========================================================================= */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 w-full max-w-md rounded-3xl shadow-2xl border border-slate-100">
-            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-indigo-900">Nuevo Torneo</h2>
+            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-green-800">Nuevo Torneo</h2>
             <div className="space-y-4">
-              <input type="text" placeholder="Nombre (Ej: Copa de Verano)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 text-slate-700 transition" onChange={e => setNewT({...newT, name: e.target.value})} />
-              <input type="number" placeholder="Precio Inscripción" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 text-slate-700 transition" onChange={e => setNewT({...newT, price: e.target.value})} />
-              <input type="url" placeholder="URL de la Foto de Portada (Opcional)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 text-slate-700 transition" onChange={e => setNewT({...newT, coverUrl: e.target.value})} />
+              <input type="text" placeholder="Nombre (Ej: Copa de Verano)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, name: e.target.value})} />
+              <input type="number" placeholder="Precio Inscripción" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, price: e.target.value})} />
+              
+              {/* SELECTOR DE CATEGORÍAS */}
+              <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition bg-white" value={newT.category} onChange={e => setNewT({...newT, category: e.target.value})}>
+                <optgroup label="Categorías Públicas">
+                  <option value="3ra">3ra Categoría</option>
+                  <option value="4ta">4ta Categoría</option>
+                  <option value="5ta A">5ta A</option>
+                  <option value="5ta B">5ta B</option>
+                </optgroup>
+                <optgroup label="Privados / Exclusivos">
+                  <option value="RCB">Copa RCB</option>
+                  <option value="CREMA">Raqueta CREMA</option>
+                </optgroup>
+              </select>
+
+              <input type="url" placeholder="URL Imagen Portada (Opcional)" className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-slate-700 transition" onChange={e => setNewT({...newT, coverUrl: e.target.value})} />
             </div>
             <div className="flex gap-3 mt-8">
               <button onClick={() => setIsModalOpen(false)} className="flex-1 p-4 rounded-xl border border-slate-200 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
-              <button onClick={handleCreateTournament} className="flex-1 p-4 rounded-xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition shadow-sm">Crear</button>
+              <button onClick={handleCreateTournament} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm">Crear</button>
             </div>
           </div>
         </div>
@@ -688,14 +687,14 @@ export default function AdminFinalMaster() {
       {isManualModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100">
-            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-indigo-900">
+            <h2 className="text-lg font-black mb-6 text-center uppercase tracking-widest border-b border-slate-100 pb-4 text-green-900">
               {manualMatch.type === 'bracket' ? 'Score de Eliminatoria' : 'Score de Grupo'}
             </h2>
             
             <div className="space-y-6">
               {manualMatch.type === 'bracket' ? (
                 <>
-                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => {
+                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => {
                     const match = bracketMatches.find(bm => bm.id === e.target.value);
                     if(match) setManualMatch({...manualMatch, groupName: match.id, winnerName: match.player1, loserName: match.player2});
                   }}>
@@ -704,10 +703,10 @@ export default function AdminFinalMaster() {
                   </select>
 
                   {manualMatch.groupName && (
-                    <div className="grid grid-cols-2 gap-4 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
+                    <div className="grid grid-cols-2 gap-4 bg-green-50/50 p-4 rounded-xl border border-green-100">
                       <div>
-                        <label className="block text-[9px] font-black text-indigo-400 mb-2 uppercase tracking-widest">Ganador</label>
-                        <select className="w-full p-3 rounded-lg border border-indigo-300 font-bold text-sm outline-none text-indigo-700 bg-white" value={manualMatch.winnerName} onChange={e => {
+                        <label className="block text-[9px] font-black text-green-600 mb-2 uppercase tracking-widest">Ganador</label>
+                        <select className="w-full p-3 rounded-lg border border-green-300 font-bold text-sm outline-none text-green-700 bg-white" value={manualMatch.winnerName} onChange={e => {
                             const m = bracketMatches.find(bm => bm.id === manualMatch.groupName);
                             const l = m.player1 === e.target.value ? m.player2 : m.player1;
                             setManualMatch({...manualMatch, winnerName: e.target.value, loserName: l});
@@ -725,16 +724,16 @@ export default function AdminFinalMaster() {
                 </>
               ) : (
                 <>
-                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
+                  <select className="w-full p-4 rounded-xl border border-slate-200 font-bold text-sm outline-none focus:border-green-500 bg-slate-50 text-slate-700" value={manualMatch.groupName} onChange={e => { resetModal(); setManualMatch({...manualMatch, type: 'group', groupName: e.target.value}); }}>
                      <option value="">Seleccionar Grupo...</option>
                      {Object.keys(groups).map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
 
                   {manualMatch.groupName && (
-                    <div className="grid grid-cols-2 gap-4 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
+                    <div className="grid grid-cols-2 gap-4 bg-green-50/50 p-4 rounded-xl border border-green-100">
                       <div>
-                        <label className="block text-[9px] font-black text-indigo-400 mb-2 uppercase tracking-widest">Ganador</label>
-                        <select className="w-full p-3 rounded-lg border border-indigo-300 font-bold text-sm outline-none text-indigo-700 bg-white" value={manualMatch.winnerName} onChange={e => {
+                        <label className="block text-[9px] font-black text-green-600 mb-2 uppercase tracking-widest">Ganador</label>
+                        <select className="w-full p-3 rounded-lg border border-green-300 font-bold text-sm outline-none text-green-700 bg-white" value={manualMatch.winnerName} onChange={e => {
                           const l = groups[manualMatch.groupName].find((p:any) => p.name !== e.target.value)?.name || '';
                           setManualMatch({...manualMatch, winnerName: e.target.value, loserName: manualMatch.loserName === e.target.value ? l : manualMatch.loserName});
                         }}>
@@ -744,7 +743,7 @@ export default function AdminFinalMaster() {
                       </div>
                       <div>
                         <label className="block text-[9px] font-black text-slate-400 mb-2 uppercase tracking-widest">Perdedor</label>
-                        <select className="w-full p-3 rounded-lg border border-slate-200 font-bold text-sm outline-none focus:border-indigo-500 text-slate-600 bg-white" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
+                        <select className="w-full p-3 rounded-lg border border-slate-200 font-bold text-sm outline-none focus:border-green-500 text-slate-600 bg-white" value={manualMatch.loserName} onChange={e => setManualMatch({...manualMatch, loserName: e.target.value})}>
                            <option value="">Jugador...</option>
                            {groups[manualMatch.groupName]?.filter((p:any) => p.name !== manualMatch.winnerName).map((p:any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                         </select>
@@ -768,32 +767,32 @@ export default function AdminFinalMaster() {
                   {/* SET 1 */}
                   <div className="flex items-center justify-center gap-3 mb-4">
                     <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 1</span>
-                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                    <input id="s1w" value={sets.s1w} onChange={e => handleSetChange('s1w', e.target.value, 's1l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                    <input id="s1l" value={sets.s1l} onChange={e => handleSetChange('s1l', e.target.value, 's2w')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                   </div>
                   
                   {/* SET 2 */}
                   <div className="flex items-center justify-center gap-3 mb-6">
                     <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 2</span>
-                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                    <input id="s2w" value={sets.s2w} onChange={e => handleSetChange('s2w', e.target.value, 's2l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                     <span className="font-black text-slate-300">-</span>
-                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                    <input id="s2l" value={sets.s2l} onChange={e => handleSetChange('s2l', e.target.value, hasThirdSet ? 's3w' : null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                   </div>
 
                   {/* TOGGLE 3ER SET */}
                   <div className="flex items-center justify-between mb-6 border-t border-slate-200 pt-4">
                     <span className="font-black text-slate-500 text-[10px] uppercase tracking-widest">Super Tie-break (3er Set)</span>
-                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-4 h-4 accent-indigo-500 rounded cursor-pointer" />
+                    <input type="checkbox" checked={hasThirdSet} onChange={e => { setHasThirdSet(e.target.checked); if(e.target.checked) setTimeout(()=>document.getElementById('s3w')?.focus(), 100); }} className="w-4 h-4 accent-green-500 rounded cursor-pointer" />
                   </div>
 
                   {/* SET 3 */}
                   {hasThirdSet && (
                     <div className="flex items-center justify-center gap-3">
                       <span className="font-black text-slate-300 w-10 text-right text-[10px] uppercase tracking-wider">Set 3</span>
-                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                      <input id="s3w" value={sets.s3w} onChange={e => handleSetChange('s3w', e.target.value, 's3l')} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                       <span className="font-black text-slate-300">-</span>
-                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-indigo-500 text-slate-700 transition" />
+                      <input id="s3l" value={sets.s3l} onChange={e => handleSetChange('s3l', e.target.value, null)} className="w-12 h-12 text-center text-lg font-black rounded-lg border border-slate-200 outline-none focus:border-green-500 text-slate-700 transition" />
                     </div>
                   )}
                 </div>
@@ -802,7 +801,7 @@ export default function AdminFinalMaster() {
             
             <div className="flex gap-3 mt-8 pt-6 border-t border-slate-100">
               <button onClick={() => setIsManualModalOpen(false)} className="flex-1 p-4 rounded-xl border border-slate-200 font-black text-[10px] uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition">Cancelar</button>
-              <button onClick={handleAddManualMatch} className="flex-1 p-4 rounded-xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 transition shadow-sm">Guardar Score</button>
+              <button onClick={handleAddManualMatch} className="flex-1 p-4 rounded-xl bg-green-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition shadow-sm">Guardar Score</button>
             </div>
           </div>
         </div>
