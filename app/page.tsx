@@ -16,6 +16,9 @@ export default function AdminFinalMaster() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   
+  // === AUMENTO: Estado para atrapar y mostrar errores de login ===
+  const [loginError, setLoginError] = useState('');
+  
   const [view, setView] = useState('main'); 
   const [step, setStep] = useState('groups'); 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -121,10 +124,26 @@ export default function AdminFinalMaster() {
     return () => { unsubM(); unsubB(); };
   }, [activeTournament, isAdmin]);
 
+  // === AUMENTO: Función de Login robusta con manejo de errores ===
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    try { await signInWithEmailAndPassword(auth, email.trim(), password); } 
-    catch (err) { alert("Error de acceso. Revisa tus credenciales."); }
+    setLoginError(''); // Limpiamos errores pasados antes de intentar
+    try { 
+      await signInWithEmailAndPassword(auth, email.trim(), password); 
+    } catch (err: any) { 
+      console.error("🔥 Error crítico de Firebase Auth:", err.message);
+      
+      // Filtramos el mensaje para dar una respuesta humana al usuario
+      if (err.message.includes('auth/invalid-credential')) {
+        setLoginError("Credenciales incorrectas o usuario no encontrado.");
+      } else if (err.message.includes('auth/unauthorized-domain')) {
+        setLoginError("Dominio bloqueado por seguridad. Agrega esta URL en tu consola de Firebase Auth.");
+      } else if (err.message.includes('auth/too-many-requests')) {
+        setLoginError("Demasiados intentos fallidos. Por favor, intenta más tarde.");
+      } else {
+        setLoginError(`Error de conexión: ${err.message}`);
+      }
+    }
   };
 
   // =========================================================================
@@ -141,7 +160,6 @@ export default function AdminFinalMaster() {
   };
 
   const cropAndUploadImage = async (): Promise<string | null> => {
-    // 🚨 FIX TYPESCRIPT: Guardamos la referencia segura en una constante antes de la promesa
     const currentImage = imageRef.current;
     if (!currentImage) return null;
     
@@ -159,7 +177,6 @@ export default function AdminFinalMaster() {
         ctx.translate(cropConfig.x, cropConfig.y);
         ctx.scale(cropConfig.scale, cropConfig.scale);
         
-        // 🚨 FIX TYPESCRIPT: Usamos la constante segura 'currentImage' en lugar de 'imageRef.current'
         ctx.drawImage(currentImage, 0, 0);
 
         canvas.toBlob(async (blob) => {
@@ -444,13 +461,22 @@ export default function AdminFinalMaster() {
   // =========================================================================
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><p className="font-bold text-green-600 uppercase tracking-widest animate-pulse">Cargando...</p></div>;
 
+  // === AUMENTO: Renderizado del formulario con bloque de error visual ===
   if (!user || !isAdmin) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <form onSubmit={handleLogin} className="bg-white p-10 shadow-lg border border-green-100 w-full max-w-sm rounded-[30px]">
         <h1 className="text-2xl font-black text-center mb-8 text-green-900 tracking-tight">Acceso Master</h1>
+        
+        {/* BLOQUE DE ERROR VISUAL */}
+        {loginError && (
+          <div className="mb-6 p-4 bg-red-50 border-2 border-red-200 text-red-600 font-bold text-sm rounded-xl text-center shadow-inner animate-pulse">
+            ⚠️ {loginError}
+          </div>
+        )}
+
         <input type="email" required placeholder="Correo" className="w-full p-4 mb-4 border-2 border-slate-100 rounded-xl font-bold outline-none focus:border-green-500 transition" onChange={e => setEmail(e.target.value)} />
         <input type="password" required placeholder="Contraseña" className="w-full p-4 mb-8 border-2 border-slate-100 rounded-xl font-bold outline-none focus:border-green-500 transition" onChange={e => setPassword(e.target.value)} />
-        <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-black tracking-widest uppercase hover:bg-green-700 transition">ENTRAR</button>
+        <button type="submit" className="w-full bg-green-600 text-white p-4 rounded-xl font-black tracking-widest uppercase hover:bg-green-700 transition shadow-md">ENTRAR</button>
       </form>
     </div>
   );
